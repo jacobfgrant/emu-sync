@@ -1,0 +1,41 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: linux
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+
+brews:
+  - repository:
+      owner: jacobfgrant
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/jacobfgrant/emu-sync"
+    description: "Sync ROMs and BIOS files from an S3-compatible bucket"
+
+nfpms:
+  - package_name: emu-sync
+    homepage: "https://github.com/jacobfgrant/emu-sync"
+    description: "Sync ROMs and BIOS files from an S3-compatible bucket"
+    formats:
+      - deb
