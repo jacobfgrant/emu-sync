@@ -23,6 +23,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug logging")
 }
 
+// SetVersion sets the version string displayed by --version.
+func SetVersion(v string) {
+	rootCmd.Version = v
+}
+
 func Execute() error {
 	return rootCmd.Execute()
 }
