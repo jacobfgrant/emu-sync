@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
+	"github.com/jacobfgrant/emu-sync/internal/storage"
 	"github.com/jacobfgrant/emu-sync/internal/token"
 	"github.com/spf13/cobra"
 )
@@ -37,6 +38,14 @@ doesn't exist.`,
 				cfg.Sync.EmulationPath = path
 			}
 		}
+
+		fmt.Print("Verifying credentials...")
+		client := storage.NewClient(&cfg.Storage)
+		if err := client.Ping(cmd.Context()); err != nil {
+			fmt.Println(" failed")
+			return fmt.Errorf("credential check failed: %w", err)
+		}
+		fmt.Println(" ok")
 
 		cfgPath := cfgFile
 		if cfgPath == "" {

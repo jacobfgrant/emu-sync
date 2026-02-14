@@ -28,6 +28,10 @@ func NewMockBackend() *MockBackend {
 	}
 }
 
+func (m *MockBackend) Ping(_ context.Context) error {
+	return nil
+}
+
 func (m *MockBackend) UploadFile(_ context.Context, key, localPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -18,6 +18,7 @@ const ManifestKey = "emu-sync-manifest.json"
 // Backend defines the operations that upload and sync workflows need.
 // storage.Client implements this; tests can substitute a mock.
 type Backend interface {
+	Ping(ctx context.Context) error
 	UploadFile(ctx context.Context, key, localPath string) error
 	UploadBytes(ctx context.Context, key string, data []byte) error
 	DownloadFile(ctx context.Context, key, localPath string) error
@@ -48,6 +49,17 @@ func NewClient(cfg *config.StorageConfig) *Client {
 		s3:     s3.New(opts),
 		bucket: cfg.Bucket,
 	}
+}
+
+// Ping verifies that the credentials and bucket are valid.
+func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.s3.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(c.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("verifying bucket access: %w", err)
+	}
+	return nil
 }
 
 // UploadFile uploads a local file to the given key in the bucket.

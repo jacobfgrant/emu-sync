@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
+	"github.com/jacobfgrant/emu-sync/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +62,14 @@ var initCmd = &cobra.Command{
 			},
 		}
 
+		fmt.Print("\nVerifying credentials...")
+		client := storage.NewClient(&cfg.Storage)
+		if err := client.Ping(cmd.Context()); err != nil {
+			fmt.Println(" failed")
+			return fmt.Errorf("credential check failed: %w", err)
+		}
+		fmt.Println(" ok")
+
 		cfgPath := cfgFile
 		if cfgPath == "" {
 			cfgPath = config.DefaultConfigPath()
@@ -70,7 +79,7 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("\nConfig written to %s\n", cfgPath)
+		fmt.Printf("Config written to %s\n", cfgPath)
 		return nil
 	},
 }
