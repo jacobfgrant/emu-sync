@@ -31,6 +31,7 @@ var initCmd = &cobra.Command{
 		}
 
 		bucket := prompt(reader, "Bucket name: ")
+		prefix := prompt(reader, "Bucket prefix (leave blank for root): ")
 		keyID := prompt(reader, "Access key ID: ")
 		secretKey := prompt(reader, "Secret access key: ")
 
@@ -69,6 +70,7 @@ var initCmd = &cobra.Command{
 				KeyID:       keyID,
 				SecretKey:   secretKey,
 				Region:      region,
+				Prefix:      prefix,
 			},
 			Sync: config.SyncConfig{
 				EmulationPath: emuPath,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -32,6 +33,7 @@ type Backend interface {
 type Client struct {
 	s3     *s3.Client
 	bucket string
+	prefix string
 }
 
 // NewClient creates a storage client from config.
@@ -48,7 +50,16 @@ func NewClient(cfg *config.StorageConfig) *Client {
 	return &Client{
 		s3:     s3.New(opts),
 		bucket: cfg.Bucket,
+		prefix: strings.TrimSuffix(cfg.Prefix, "/"),
 	}
+}
+
+// prefixedKey prepends the configured prefix to a storage key.
+func (c *Client) prefixedKey(key string) string {
+	if c.prefix == "" {
+		return key
+	}
+	return c.prefix + "/" + key
 }
 
 // Ping verifies that the credentials and bucket are valid.
@@ -76,7 +87,7 @@ func (c *Client) UploadFile(ctx context.Context, key, localPath string) error {
 
 	_, err = c.s3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(c.prefixedKey(key)),
 		Body:   f,
 	})
 	if err != nil {
@@ -90,7 +101,7 @@ func (c *Client) UploadFile(ctx context.Context, key, localPath string) error {
 func (c *Client) UploadBytes(ctx context.Context, key string, data []byte) error {
 	_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(c.prefixedKey(key)),
 		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
@@ -104,7 +115,7 @@ func (c *Client) UploadBytes(ctx context.Context, key string, data []byte) error
 func (c *Client) DownloadFile(ctx context.Context, key, localPath string) error {
 	result, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(c.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(c.prefixedKey(key)),
 	})
 	if err != nil {
 		return fmt.Errorf("downloading %s: %w", key, err)
@@ -128,7 +139,7 @@ func (c *Client) DownloadFile(ctx context.Context, key, localPath string) error 
 func (c *Client) DownloadBytes(ctx context.Context, key string) ([]byte, error) {
 	result, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(c.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(c.prefixedKey(key)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("downloading %s: %w", key, err)
@@ -147,7 +158,7 @@ func (c *Client) DownloadBytes(ctx context.Context, key string) ([]byte, error) 
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
 	_, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(c.prefixedKey(key)),
 	})
 	if err != nil {
 		return fmt.Errorf("deleting %s: %w", key, err)

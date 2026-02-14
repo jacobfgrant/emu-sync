@@ -15,6 +15,7 @@ type Data struct {
 	KeyID         string `json:"key_id"`
 	SecretKey     string `json:"secret_key"`
 	Region        string `json:"region"`
+	Prefix        string `json:"prefix,omitempty"`
 	EmulationPath string `json:"emulation_path"`
 }
 
@@ -55,6 +56,7 @@ func (d *Data) ToConfig() *config.Config {
 			KeyID:       d.KeyID,
 			SecretKey:   d.SecretKey,
 			Region:      d.Region,
+			Prefix:      d.Prefix,
 		},
 		Sync: config.SyncConfig{
 			EmulationPath: d.EmulationPath,
@@ -72,6 +74,7 @@ func FromConfig(cfg *config.Config) *Data {
 		KeyID:         cfg.Storage.KeyID,
 		SecretKey:     cfg.Storage.SecretKey,
 		Region:        cfg.Storage.Region,
+		Prefix:        cfg.Storage.Prefix,
 		EmulationPath: cfg.Sync.EmulationPath,
 	}
 }

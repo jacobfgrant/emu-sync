@@ -16,6 +16,7 @@ type StorageConfig struct {
 	KeyID       string `toml:"key_id"`
 	SecretKey   string `toml:"secret_key"`
 	Region      string `toml:"region"`
+	Prefix      string `toml:"prefix,omitempty"`
 }
 
 // SyncConfig holds local sync settings.
