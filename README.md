@@ -70,17 +70,36 @@ emu-sync install
 | `--workers N` | `sync` | Parallel download workers (default 1) |
 | `--progress-json` | `sync` | Emit JSON progress events to stdout |
 
+## Backblaze B2 key capabilities
+
+If using B2, create an application key with these capabilities:
+
+| Capability | Required for |
+|------------|-------------|
+| `listFiles` | `sync`, `status`, credential verification |
+| `readFiles` | `sync`, `status` |
+| `writeFiles` | `upload` |
+| `deleteFiles` | `upload` (deleting removed files from bucket) |
+| `listAllBucketNames` | — (not required, but B2 adds it by default) |
+
+**Sync-only key** (recipients): `listFiles`, `readFiles`
+
+**Full access key** (admin): `listFiles`, `readFiles`, `writeFiles`, `deleteFiles`
+
+Always scope the key to a single bucket.
+
 ## Sample config
 
 Config file location: `~/.config/emu-sync/config.toml`
 
 ```toml
 [storage]
-endpoint_url = "https://s3.us-west-004.backblazeb2.com"
+endpoint_url = "https://s3.us-west-002.backblazeb2.com"
 bucket = "my-roms-bucket"
 key_id = "your-key-id"
 secret_key = "your-secret-key"
-region = "us-west-004"
+region = "us-west-002"
+# prefix = "Emulation"  # optional: store under a path prefix in the bucket
 
 [sync]
 emulation_path = "/run/media/mmcblk0p1/Emulation"
