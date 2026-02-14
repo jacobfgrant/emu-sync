@@ -32,12 +32,17 @@ were removed from the bucket.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
+		workers := syncWorkers
+		if !cmd.Flags().Changed("workers") && cfg.Sync.Workers > 0 {
+			workers = cfg.Sync.Workers
+		}
+
 		client := storage.NewClient(&cfg.Storage)
 		opts := intsync.Options{
 			DryRun:   syncDryRun,
 			NoDelete: syncNoDelete,
 			Verbose:  verbose,
-			Workers:  syncWorkers,
+			Workers:  workers,
 		}
 		if syncProgressJSON {
 			opts.Progress = progress.NewReporter(true)

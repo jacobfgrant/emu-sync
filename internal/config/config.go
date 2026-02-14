@@ -23,6 +23,7 @@ type SyncConfig struct {
 	EmulationPath string   `toml:"emulation_path"`
 	SyncDirs      []string `toml:"sync_dirs"`
 	Delete        bool     `toml:"delete"`
+	Workers       int      `toml:"workers"`
 }
 
 // Config is the top-level configuration.
