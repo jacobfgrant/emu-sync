@@ -11,6 +11,7 @@ import (
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
+	"github.com/jacobfgrant/emu-sync/internal/progress"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 )
 
@@ -21,8 +22,9 @@ type Options struct {
 	DryRun            bool
 	NoDelete          bool
 	Verbose           bool
-	Workers           int    // number of parallel downloads; 0 or 1 = sequential
-	LocalManifestPath string // overrides default; used by tests
+	Workers           int                // number of parallel downloads; 0 or 1 = sequential
+	Progress          *progress.Reporter // emits JSON progress events; nil = no-op
+	LocalManifestPath string             // overrides default; used by tests
 }
 
 // Result summarizes what a sync run did.
@@ -134,9 +136,16 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 		delete(local.Files, key)
 		result.Deleted = append(result.Deleted, key)
+		if opts.Progress != nil {
+			opts.Progress.Delete(key)
+		}
 	}
 
 	result.Skipped = len(filteredRemote.Files) - len(toDownload)
+
+	if opts.Progress != nil {
+		opts.Progress.Done(len(result.Downloaded), len(result.Deleted), len(result.Errors), result.Skipped)
+	}
 
 	// Save updated local manifest
 	if !opts.DryRun {
@@ -149,13 +158,24 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 }
 
 func downloadSequential(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
+	prog := opts.Progress
 	for _, key := range keys {
+		entry := filteredRemote.Files[key]
+		if prog != nil {
+			prog.Start(key, entry.Size)
+		}
 		if err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose); err != nil {
 			result.Errors = append(result.Errors, err)
+			if prog != nil {
+				prog.FileError(key, err)
+			}
 			continue
 		}
-		local.Files[key] = filteredRemote.Files[key]
+		local.Files[key] = entry
 		result.Downloaded = append(result.Downloaded, key)
+		if prog != nil {
+			prog.Complete(key)
+		}
 	}
 }
 
@@ -172,10 +192,14 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 		go func() {
 			defer wg.Done()
 			for key := range jobs {
+				entry := filteredRemote.Files[key]
+				if opts.Progress != nil {
+					opts.Progress.Start(key, entry.Size)
+				}
 				err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose)
 				results <- downloadResult{
 					key:   key,
-					entry: filteredRemote.Files[key],
+					entry: entry,
 					err:   err,
 				}
 			}
@@ -195,13 +219,20 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 	}()
 
 	// Collect results
+	prog := opts.Progress
 	for dr := range results {
 		if dr.err != nil {
 			result.Errors = append(result.Errors, dr.err)
+			if prog != nil {
+				prog.FileError(dr.key, dr.err)
+			}
 			continue
 		}
 		local.Files[dr.key] = dr.entry
 		result.Downloaded = append(result.Downloaded, dr.key)
+		if prog != nil {
+			prog.Complete(dr.key)
+		}
 	}
 }
 

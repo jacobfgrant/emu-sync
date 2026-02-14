@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
+	"github.com/jacobfgrant/emu-sync/internal/progress"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 	intsync "github.com/jacobfgrant/emu-sync/internal/sync"
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 var syncDryRun bool
 var syncNoDelete bool
 var syncWorkers int
+var syncProgressJSON bool
 
 var syncCmd = &cobra.Command{
 	Use:   "sync",
@@ -37,12 +39,18 @@ were removed from the bucket.`,
 			Verbose:  verbose,
 			Workers:  syncWorkers,
 		}
+		if syncProgressJSON {
+			opts.Progress = progress.NewReporter(true)
+		}
+
 		result, err := intsync.Run(cmd.Context(), client, cfg, opts)
 		if err != nil {
 			return err
 		}
 
-		fmt.Print(result.Summary())
+		if !syncProgressJSON {
+			fmt.Print(result.Summary())
+		}
 		return nil
 	},
 }
@@ -51,5 +59,6 @@ func init() {
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "show what would change without downloading")
 	syncCmd.Flags().BoolVar(&syncNoDelete, "no-delete", false, "don't delete files removed from bucket")
 	syncCmd.Flags().IntVar(&syncWorkers, "workers", 1, "number of parallel downloads (1 = sequential)")
+	syncCmd.Flags().BoolVar(&syncProgressJSON, "progress-json", false, "emit JSON progress events to stdout")
 	rootCmd.AddCommand(syncCmd)
 }
