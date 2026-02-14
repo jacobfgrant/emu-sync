@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 	"github.com/spf13/cobra"
 )
+
+var b2RegionRe = regexp.MustCompile(`s3\.([^.]+)\.backblazeb2\.com`)
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -22,11 +25,23 @@ var initCmd = &cobra.Command{
 		fmt.Println("=============================")
 		fmt.Println()
 
-		endpoint := prompt(reader, "S3 endpoint URL (e.g., https://s3.us-west-004.backblazeb2.com): ")
+		endpoint := prompt(reader, "S3 endpoint (e.g., s3.us-west-002.backblazeb2.com): ")
+		if endpoint != "" && !strings.Contains(endpoint, "://") {
+			endpoint = "https://" + endpoint
+		}
+
 		bucket := prompt(reader, "Bucket name: ")
 		keyID := prompt(reader, "Access key ID: ")
 		secretKey := prompt(reader, "Secret access key: ")
-		region := prompt(reader, "Region (e.g., us-west-004): ")
+
+		// Auto-detect region from B2 endpoint URLs
+		var region string
+		if m := b2RegionRe.FindStringSubmatch(endpoint); m != nil {
+			region = m[1]
+			fmt.Printf("Detected region: %s\n", region)
+		} else {
+			region = prompt(reader, "Region: ")
+		}
 
 		defaultPath := "/run/media/mmcblk0p1/Emulation"
 		emuPath := prompt(reader, fmt.Sprintf("Emulation path [%s]: ", defaultPath))
