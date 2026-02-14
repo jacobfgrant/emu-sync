@@ -22,7 +22,7 @@ type Result struct {
 
 // Run walks the source directory, computes hashes, uploads changed files,
 // and writes a new manifest to the bucket.
-func Run(ctx context.Context, client *storage.Client, sourcePath string, syncDirs []string, dryRun bool, verbose bool) (*Result, error) {
+func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDirs []string, dryRun bool, verbose bool) (*Result, error) {
 	result := &Result{}
 
 	// Build a new manifest from local files

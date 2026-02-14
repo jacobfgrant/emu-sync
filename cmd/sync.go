@@ -30,7 +30,12 @@ were removed from the bucket.`,
 		}
 
 		client := storage.NewClient(&cfg.Storage)
-		result, err := intsync.Run(cmd.Context(), client, cfg, syncDryRun, syncNoDelete, verbose)
+		opts := intsync.Options{
+			DryRun:   syncDryRun,
+			NoDelete: syncNoDelete,
+			Verbose:  verbose,
+		}
+		result, err := intsync.Run(cmd.Context(), client, cfg, opts)
 		if err != nil {
 			return err
 		}

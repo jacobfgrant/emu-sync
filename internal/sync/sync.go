@@ -15,6 +15,14 @@ import (
 
 const tmpSuffix = ".emu-sync-tmp"
 
+// Options controls sync behavior.
+type Options struct {
+	DryRun            bool
+	NoDelete          bool
+	Verbose           bool
+	LocalManifestPath string // overrides default; used by tests
+}
+
 // Result summarizes what a sync run did.
 type Result struct {
 	Downloaded []string
@@ -24,7 +32,7 @@ type Result struct {
 }
 
 // Run downloads the remote manifest, diffs against local, and syncs files.
-func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun, noDelete, verbose bool) (*Result, error) {
+func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts Options) (*Result, error) {
 	result := &Result{}
 
 	// Download remote manifest
@@ -39,10 +47,13 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 	}
 
 	// Load local manifest (or start empty)
-	localManifestPath := config.DefaultLocalManifestPath()
+	localManifestPath := opts.LocalManifestPath
+	if localManifestPath == "" {
+		localManifestPath = config.DefaultLocalManifestPath()
+	}
 	local, err := manifest.LoadJSON(localManifestPath)
 	if err != nil {
-		if verbose {
+		if opts.Verbose {
 			log.Printf("no local manifest found, treating as first sync: %v", err)
 		}
 		local = manifest.New()
@@ -63,8 +74,8 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 	diff := manifest.Diff(filteredRemote, local)
 
 	// Clean up any leftover temp files from interrupted syncs
-	if !dryRun {
-		cleanTempFiles(cfg.Sync.EmulationPath, verbose)
+	if !opts.DryRun {
+		cleanTempFiles(cfg.Sync.EmulationPath, opts.Verbose)
 	}
 
 	// Download new and modified files
@@ -73,13 +84,13 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
 		tmpPath := localPath + tmpSuffix
 
-		if dryRun {
+		if opts.DryRun {
 			fmt.Printf("would download: %s\n", key)
 			result.Downloaded = append(result.Downloaded, key)
 			continue
 		}
 
-		if verbose {
+		if opts.Verbose {
 			log.Printf("downloading: %s", key)
 		}
 
@@ -108,11 +119,11 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 	}
 
 	// Delete local files removed from remote
-	deleteAllowed := cfg.Sync.Delete && !noDelete
+	deleteAllowed := cfg.Sync.Delete && !opts.NoDelete
 	for _, key := range diff.Deleted {
 		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
 
-		if dryRun {
+		if opts.DryRun {
 			if deleteAllowed {
 				fmt.Printf("would delete: %s\n", key)
 			} else {
@@ -123,13 +134,13 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 		}
 
 		if !deleteAllowed {
-			if verbose {
+			if opts.Verbose {
 				log.Printf("skipping delete (disabled): %s", key)
 			}
 			continue
 		}
 
-		if verbose {
+		if opts.Verbose {
 			log.Printf("deleting: %s", key)
 		}
 
@@ -145,7 +156,7 @@ func Run(ctx context.Context, client *storage.Client, cfg *config.Config, dryRun
 	result.Skipped = len(filteredRemote.Files) - len(toDownload)
 
 	// Save updated local manifest
-	if !dryRun {
+	if !opts.DryRun {
 		if err := local.SaveJSON(localManifestPath); err != nil {
 			return result, fmt.Errorf("saving local manifest: %w", err)
 		}

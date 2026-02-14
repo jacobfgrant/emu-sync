@@ -13,7 +13,19 @@ import (
 	"github.com/jacobfgrant/emu-sync/internal/config"
 )
 
-const manifestKey = "emu-sync-manifest.json"
+const ManifestKey = "emu-sync-manifest.json"
+
+// Backend defines the operations that upload and sync workflows need.
+// storage.Client implements this; tests can substitute a mock.
+type Backend interface {
+	UploadFile(ctx context.Context, key, localPath string) error
+	UploadBytes(ctx context.Context, key string, data []byte) error
+	DownloadFile(ctx context.Context, key, localPath string) error
+	DownloadBytes(ctx context.Context, key string) ([]byte, error)
+	DeleteObject(ctx context.Context, key string) error
+	DownloadManifest(ctx context.Context) ([]byte, error)
+	UploadManifest(ctx context.Context, data []byte) error
+}
 
 // Client wraps an S3 client for bucket operations.
 type Client struct {
@@ -130,10 +142,10 @@ func (c *Client) DeleteObject(ctx context.Context, key string) error {
 
 // DownloadManifest downloads the remote manifest from the bucket.
 func (c *Client) DownloadManifest(ctx context.Context) ([]byte, error) {
-	return c.DownloadBytes(ctx, manifestKey)
+	return c.DownloadBytes(ctx, ManifestKey)
 }
 
 // UploadManifest uploads a manifest to the bucket.
 func (c *Client) UploadManifest(ctx context.Context, data []byte) error {
-	return c.UploadBytes(ctx, manifestKey, data)
+	return c.UploadBytes(ctx, ManifestKey, data)
 }
