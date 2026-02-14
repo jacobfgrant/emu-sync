@@ -78,7 +78,7 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 	remoteData, err := client.DownloadManifest(ctx)
 	if err != nil {
 		if verbose {
-			log.Printf("no existing remote manifest (first upload?): %v", err)
+			log.Printf("no existing remote manifest, assuming first upload")
 		}
 		oldManifest = manifest.New()
 	} else {
