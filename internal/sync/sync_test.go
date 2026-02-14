@@ -264,6 +264,78 @@ func TestSyncCleansUpTempFiles(t *testing.T) {
 	}
 }
 
+func TestSyncParallelDownloads(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	files := map[string]mockFile{
+		"roms/snes/Game1.sfc": {content: "game1 data", size: 10},
+		"roms/snes/Game2.sfc": {content: "game2 data", size: 10},
+		"roms/snes/Game3.sfc": {content: "game3 data", size: 10},
+		"roms/gba/Game4.gba":  {content: "game4 data", size: 10},
+		"bios/scph5501.bin":   {content: "bios data", size: 9},
+	}
+	mock := mockWithManifest(t, files)
+
+	cfg := testConfig(emuDir)
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		Workers:           3,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 5 {
+		t.Errorf("downloaded %d, want 5", len(result.Downloaded))
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("errors = %d, want 0", len(result.Errors))
+	}
+
+	// Verify all files exist with correct content
+	for key, f := range files {
+		assertFileContent(t, filepath.Join(emuDir, filepath.FromSlash(key)), f.content)
+	}
+
+	// Verify local manifest has all entries
+	local, err := manifest.LoadJSON(manifestPath)
+	if err != nil {
+		t.Fatalf("loading local manifest: %v", err)
+	}
+	if len(local.Files) != 5 {
+		t.Errorf("local manifest has %d entries, want 5", len(local.Files))
+	}
+}
+
+func TestSyncParallelWithErrors(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Good1.sfc": {content: "good1", size: 5},
+		"roms/snes/Good2.sfc": {content: "good2", size: 5},
+		"roms/snes/Bad.sfc":   {content: "bad", size: 3},
+	})
+	mock.DownloadErrors["roms/snes/Bad.sfc"] = fmt.Errorf("simulated error")
+
+	cfg := testConfig(emuDir)
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		Workers:           2,
+	})
+	if err != nil {
+		t.Fatalf("Run should not return fatal error: %v", err)
+	}
+
+	if len(result.Downloaded) != 2 {
+		t.Errorf("downloaded %d, want 2", len(result.Downloaded))
+	}
+	if len(result.Errors) != 1 {
+		t.Errorf("errors = %d, want 1", len(result.Errors))
+	}
+}
+
 // --- helpers ---
 
 type mockFile struct {

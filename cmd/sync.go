@@ -11,6 +11,7 @@ import (
 
 var syncDryRun bool
 var syncNoDelete bool
+var syncWorkers int
 
 var syncCmd = &cobra.Command{
 	Use:   "sync",
@@ -34,6 +35,7 @@ were removed from the bucket.`,
 			DryRun:   syncDryRun,
 			NoDelete: syncNoDelete,
 			Verbose:  verbose,
+			Workers:  syncWorkers,
 		}
 		result, err := intsync.Run(cmd.Context(), client, cfg, opts)
 		if err != nil {
@@ -48,5 +50,6 @@ were removed from the bucket.`,
 func init() {
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "show what would change without downloading")
 	syncCmd.Flags().BoolVar(&syncNoDelete, "no-delete", false, "don't delete files removed from bucket")
+	syncCmd.Flags().IntVar(&syncWorkers, "workers", 1, "number of parallel downloads (1 = sequential)")
 	rootCmd.AddCommand(syncCmd)
 }

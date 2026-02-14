@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	gosync "sync"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
@@ -20,6 +21,7 @@ type Options struct {
 	DryRun            bool
 	NoDelete          bool
 	Verbose           bool
+	Workers           int    // number of parallel downloads; 0 or 1 = sequential
 	LocalManifestPath string // overrides default; used by tests
 }
 
@@ -29,6 +31,13 @@ type Result struct {
 	Deleted    []string
 	Skipped    int
 	Errors     []error
+}
+
+// downloadResult is sent back from worker goroutines.
+type downloadResult struct {
+	key   string
+	entry manifest.FileEntry
+	err   error
 }
 
 // Run downloads the remote manifest, diffs against local, and syncs files.
@@ -80,42 +89,16 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 	// Download new and modified files
 	toDownload := append(diff.Added, diff.Modified...)
-	for _, key := range toDownload {
-		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
-		tmpPath := localPath + tmpSuffix
 
-		if opts.DryRun {
+	if opts.DryRun {
+		for _, key := range toDownload {
 			fmt.Printf("would download: %s\n", key)
 			result.Downloaded = append(result.Downloaded, key)
-			continue
 		}
-
-		if opts.Verbose {
-			log.Printf("downloading: %s", key)
-		}
-
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("mkdir for %s: %w", key, err))
-			continue
-		}
-
-		// Atomic download: write to temp file, then rename
-		if err := client.DownloadFile(ctx, key, tmpPath); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("download %s: %w", key, err))
-			os.Remove(tmpPath)
-			continue
-		}
-
-		if err := os.Rename(tmpPath, localPath); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("rename %s: %w", key, err))
-			os.Remove(tmpPath)
-			continue
-		}
-
-		// Update local manifest entry only after successful rename
-		local.Files[key] = filteredRemote.Files[key]
-		result.Downloaded = append(result.Downloaded, key)
+	} else if opts.Workers > 1 && len(toDownload) > 1 {
+		downloadParallel(ctx, client, cfg, filteredRemote, toDownload, opts, result, local)
+	} else {
+		downloadSequential(ctx, client, cfg, filteredRemote, toDownload, opts, result, local)
 	}
 
 	// Delete local files removed from remote
@@ -163,6 +146,89 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 	}
 
 	return result, nil
+}
+
+func downloadSequential(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
+	for _, key := range keys {
+		if err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose); err != nil {
+			result.Errors = append(result.Errors, err)
+			continue
+		}
+		local.Files[key] = filteredRemote.Files[key]
+		result.Downloaded = append(result.Downloaded, key)
+	}
+}
+
+func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
+	// Channel for sending keys to workers
+	jobs := make(chan string, len(keys))
+	// Channel for collecting results from workers
+	results := make(chan downloadResult, len(keys))
+
+	// Start worker goroutines
+	var wg gosync.WaitGroup
+	for i := 0; i < opts.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose)
+				results <- downloadResult{
+					key:   key,
+					entry: filteredRemote.Files[key],
+					err:   err,
+				}
+			}
+		}()
+	}
+
+	// Send all keys to the jobs channel, then close it
+	for _, key := range keys {
+		jobs <- key
+	}
+	close(jobs)
+
+	// Wait for all workers to finish, then close results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	for dr := range results {
+		if dr.err != nil {
+			result.Errors = append(result.Errors, dr.err)
+			continue
+		}
+		local.Files[dr.key] = dr.entry
+		result.Downloaded = append(result.Downloaded, dr.key)
+	}
+}
+
+// downloadOne downloads a single file atomically.
+func downloadOne(ctx context.Context, client storage.Backend, emuPath, key string, verbose bool) error {
+	localPath := filepath.Join(emuPath, filepath.FromSlash(key))
+	tmpPath := localPath + tmpSuffix
+
+	if verbose {
+		log.Printf("downloading: %s", key)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir for %s: %w", key, err)
+	}
+
+	if err := client.DownloadFile(ctx, key, tmpPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("download %s: %w", key, err)
+	}
+
+	if err := os.Rename(tmpPath, localPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename %s: %w", key, err)
+	}
+
+	return nil
 }
 
 // cleanTempFiles removes leftover .emu-sync-tmp files from interrupted syncs.
