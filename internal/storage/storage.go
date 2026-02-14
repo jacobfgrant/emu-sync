@@ -52,9 +52,13 @@ func NewClient(cfg *config.StorageConfig) *Client {
 }
 
 // Ping verifies that the credentials and bucket are valid.
+// Uses ListObjectsV2 with MaxKeys=0 so it only requires the listFiles
+// capability on B2, which emu-sync already needs for normal operation.
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.s3.HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(c.bucket),
+	maxKeys := int32(0)
+	_, err := c.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(c.bucket),
+		MaxKeys: &maxKeys,
 	})
 	if err != nil {
 		return fmt.Errorf("verifying bucket access: %w", err)
