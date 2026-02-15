@@ -70,15 +70,12 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 		local = manifest.New()
 	}
 
-	// Filter remote manifest to only configured sync_dirs
+	// Filter remote manifest to configured sync_dirs / sync_exclude
 	filteredRemote := manifest.New()
 	filteredRemote.GeneratedAt = remote.GeneratedAt
 	for key, entry := range remote.Files {
-		for _, dir := range cfg.Sync.SyncDirs {
-			if strings.HasPrefix(key, dir+"/") {
-				filteredRemote.Files[key] = entry
-				break
-			}
+		if cfg.ShouldSync(key) {
+			filteredRemote.Files[key] = entry
 		}
 	}
 

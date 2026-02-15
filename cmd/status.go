@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
@@ -43,14 +42,11 @@ var statusCmd = &cobra.Command{
 			local = manifest.New()
 		}
 
-		// Filter to configured sync dirs
+		// Filter to configured sync dirs / exclude
 		filtered := manifest.New()
 		for key, entry := range remote.Files {
-			for _, dir := range cfg.Sync.SyncDirs {
-				if strings.HasPrefix(key, dir+"/") {
-					filtered.Files[key] = entry
-					break
-				}
+			if cfg.ShouldSync(key) {
+				filtered.Files[key] = entry
 			}
 		}
 

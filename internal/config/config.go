@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -22,6 +23,7 @@ type StorageConfig struct {
 type SyncConfig struct {
 	EmulationPath string   `toml:"emulation_path"`
 	SyncDirs      []string `toml:"sync_dirs"`
+	SyncExclude   []string `toml:"sync_exclude,omitempty"`
 	Delete        bool     `toml:"delete"`
 	Workers       int      `toml:"workers"`
 }
@@ -88,6 +90,24 @@ func (c *Config) validate() error {
 		c.Sync.SyncDirs = []string{"roms", "bios"}
 	}
 	return nil
+}
+
+// ShouldSync returns true if the given key passes the sync_dirs include
+// filter and is not in sync_exclude. Keys match sync_dirs by prefix
+// (e.g., "roms/snes" matches "roms/snes/Game.sfc") or exact match
+// (for individual file entries).
+func (c *Config) ShouldSync(key string) bool {
+	for _, ex := range c.Sync.SyncExclude {
+		if key == ex {
+			return false
+		}
+	}
+	for _, dir := range c.Sync.SyncDirs {
+		if key == dir || strings.HasPrefix(key, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // Write serializes a Config to TOML and writes it to the given path.
