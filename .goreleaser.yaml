@@ -16,7 +16,8 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
@@ -25,16 +26,23 @@ checksum:
 changelog:
   sort: asc
 
-brews:
-  - repository:
-      owner: jacobfgrant
-      name: homebrew-tap
-    directory: Formula
+homebrew_casks:
+  - name: emu-sync
+    binaries:
+      - emu-sync
     homepage: "https://github.com/jacobfgrant/emu-sync"
     description: "Sync ROMs and BIOS files from an S3-compatible bucket"
+    repository:
+      owner: jacobfgrant
+      name: homebrew-tap
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/emu-sync"]
 
 nfpms:
   - package_name: emu-sync
+    maintainer: "Jacob F. Grant git@jacobfgrant.com"
     homepage: "https://github.com/jacobfgrant/emu-sync"
     description: "Sync ROMs and BIOS files from an S3-compatible bucket"
     formats:
