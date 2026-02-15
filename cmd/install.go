@@ -27,6 +27,12 @@ var guiScript string
 //go:embed install_assets/emu-sync-web.desktop
 var webDesktopEntry string
 
+//go:embed install_assets/emu-sync-web-Info.plist
+var webAppPlist string
+
+//go:embed install_assets/emu-sync-web.sh
+var webAppLauncher string
+
 //go:embed install_assets/com.jacobfgrant.emu-sync.plist
 var launchdPlist string
 
@@ -39,10 +45,11 @@ var installCmd = &cobra.Command{
 	Short: "Install automatic sync schedule",
 	Long: `On Linux: installs a systemd user timer and desktop shortcuts.
 The "Sync ROMs" shortcut runs a headless sync; the "emu-sync" shortcut
-opens the web UI for managing game selections. Use --no-shortcuts to
-install only the systemd timer.
-On macOS: installs a launchd user agent.
-Syncs automatically every 6 hours.`,
+opens the web UI for managing game selections.
+On macOS: installs a launchd user agent and an emu-sync app bundle
+in ~/Applications that opens the web UI.
+Use --no-shortcuts to skip shortcuts/app and only install the
+timer/schedule. Syncs automatically every 6 hours.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Resolve the actual binary path
 		binPath, err := os.Executable()
@@ -174,8 +181,32 @@ func installMacOS(binPath string) error {
 		fmt.Println("Loaded launch agent (syncs every 6 hours)")
 	}
 
+	if !noShortcuts {
+		// Install minimal .app bundle for web UI
+		appDir := filepath.Join(home, "Applications", "emu-sync.app", "Contents")
+		macosDir := filepath.Join(appDir, "MacOS")
+		if err := os.MkdirAll(macosDir, 0o755); err != nil {
+			return fmt.Errorf("creating app bundle: %w", err)
+		}
+
+		plistDst := filepath.Join(appDir, "Info.plist")
+		if err := os.WriteFile(plistDst, []byte(webAppPlist), 0o644); err != nil {
+			return fmt.Errorf("writing app Info.plist: %w", err)
+		}
+
+		resolvedLauncher := strings.Replace(webAppLauncher, "BINARY_PATH", binPath, 1)
+		launcherPath := filepath.Join(macosDir, "emu-sync-web")
+		if err := os.WriteFile(launcherPath, []byte(resolvedLauncher), 0o755); err != nil {
+			return fmt.Errorf("writing app launcher: %w", err)
+		}
+		fmt.Printf("Installed %s\n", filepath.Join(home, "Applications", "emu-sync.app"))
+	}
+
 	fmt.Printf("\nDone! Sync will run automatically every 6 hours.\n")
 	fmt.Printf("Logs: %s/emu-sync.log\n", logDir)
+	if !noShortcuts {
+		fmt.Println("You can also open the emu-sync app in ~/Applications.")
+	}
 	return nil
 }
 
