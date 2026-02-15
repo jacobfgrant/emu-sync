@@ -290,5 +290,6 @@ func (r *Result) Summary() string {
 			fmt.Fprintf(&b, "  - %v\n", err)
 		}
 	}
+	fmt.Fprintf(&b, "Total: %d files\n", len(r.Downloaded)+r.Skipped)
 	return b.String()
 }
