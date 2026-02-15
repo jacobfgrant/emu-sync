@@ -182,6 +182,50 @@ emulation_path = "emu-sync/Emulation"
 	}
 }
 
+func TestExpandEnvVarPath(t *testing.T) {
+	t.Setenv("EMU_SYNC_TEST_DIR", "/opt/emulation")
+	toml := `
+[storage]
+bucket = "b"
+key_id = "abc"
+secret_key = "xyz"
+[sync]
+emulation_path = "$EMU_SYNC_TEST_DIR/roms"
+`
+	path := writeTempConfig(t, toml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "/opt/emulation/roms"
+	if cfg.Sync.EmulationPath != want {
+		t.Errorf("emulation_path = %q, want %q", cfg.Sync.EmulationPath, want)
+	}
+}
+
+func TestExpandEnvVarWithHome(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	toml := `
+[storage]
+bucket = "b"
+key_id = "abc"
+secret_key = "xyz"
+[sync]
+emulation_path = "$HOME/Emulation"
+`
+	path := writeTempConfig(t, toml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := filepath.Join(home, "Emulation")
+	if cfg.Sync.EmulationPath != want {
+		t.Errorf("emulation_path = %q, want %q", cfg.Sync.EmulationPath, want)
+	}
+}
+
 func TestShouldSync(t *testing.T) {
 	cfg := &Config{
 		Sync: SyncConfig{

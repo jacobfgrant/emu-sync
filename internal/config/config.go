@@ -93,11 +93,12 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// expandPath resolves ~ and relative paths to absolute paths.
-// Relative paths are resolved against the user's home directory
-// (not the working directory) so the result is stable regardless
-// of where the command is run from.
+// expandPath resolves environment variables, ~, and relative paths to
+// absolute paths. Relative paths are resolved against the user's home
+// directory (not the working directory) so the result is stable
+// regardless of where the command is run from.
 func expandPath(p string) string {
+	p = os.ExpandEnv(p)
 	if filepath.IsAbs(p) {
 		return p
 	}
