@@ -205,17 +205,9 @@ func installMacOS(binPath string) error {
 			return fmt.Errorf("writing app launcher: %w", err)
 		}
 
-		// Try to use a system icon (best-effort)
+		// Copy system sync icon (best-effort)
 		iconDst := filepath.Join(resourcesDir, "icon.icns")
-		iconCandidates := []string{
-			"/Applications/Safari.app/Contents/Resources/AppIcon.icns",
-			"/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericNetworkIcon.icns",
-		}
-		for _, src := range iconCandidates {
-			if copyFile(src, iconDst) == nil {
-				break
-			}
-		}
+		copyFile("/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/Sync.icns", iconDst)
 
 		fmt.Printf("Installed %s\n", filepath.Join(home, "Applications", "emu-sync.app"))
 	}
