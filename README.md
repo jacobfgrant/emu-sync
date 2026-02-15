@@ -7,7 +7,9 @@ Sync ROMs and BIOS files from an S3-compatible bucket to one or more devices.
 - **Upload** from your main machine to any S3-compatible bucket (Backblaze B2, AWS S3, DigitalOcean Spaces)
 - **Sync** to multiple devices — only downloads new or changed files (manifest-based delta sync)
 - **Delete propagation** — optionally removes local files that were deleted from the bucket
-- **Parallel downloads** — configurable worker count for faster syncs
+- **Parallel transfers** — configurable worker count for faster uploads and syncs
+- **Bandwidth limiting** — cap transfer speed to avoid saturating your connection
+- **Automatic retries** — exponential backoff recovers from mid-transfer network hiccups
 - **Setup tokens** — generate a single token that configures a recipient's device in one command
 - **Interactive game selection** — choose which systems and individual games to sync
 - **Automatic scheduling** — systemd timer (Linux/SteamOS) or launchd agent (macOS) that syncs every 6 hours
@@ -82,7 +84,7 @@ emu-sync install
 | `--source` | `upload` | Source directory (defaults to config `emulation_path`) |
 | `--dry-run` | `upload`, `sync` | Show what would happen without making changes |
 | `--no-delete` | `sync` | Skip deleting files removed from bucket |
-| `--workers N` | `sync` | Parallel download workers (default 1) |
+| `--workers N` | `upload`, `sync` | Parallel transfer workers (default 1) |
 | `--manifest-only` | `upload` | Regenerate manifest without uploading files |
 | `--progress-json` | `sync` | Emit JSON progress events to stdout |
 
@@ -146,9 +148,11 @@ sync_dirs = ["roms", "bios"]
 # sync_exclude = ["roms/ps2/Some Huge Game.iso"]  # optional: exclude specific files
 delete = true
 workers = 4
+# max_retries = 3       # per-file retries with exponential backoff (default 3)
+# bandwidth_limit = "10MB"  # throttle transfers (e.g., "500KB", "10MB", "1GB")
 ```
 
-Relative paths in `emulation_path` resolve against the user's home directory (e.g., `Emulation` becomes `~/Emulation`). Absolute paths and `~/` paths work as expected.
+Relative paths in `emulation_path` resolve against the user's home directory (e.g., `Emulation` becomes `~/Emulation`). Environment variables like `$HOME` are also expanded. Absolute paths and `~/` paths work as expected.
 
 ## How it works
 
