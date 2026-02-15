@@ -167,7 +167,7 @@ bucket = "b"
 key_id = "abc"
 secret_key = "xyz"
 [sync]
-emulation_path = "Emulation"
+emulation_path = "emu-sync/Emulation"
 `
 	path := writeTempConfig(t, toml)
 	cfg, err := Load(path)
@@ -175,8 +175,10 @@ emulation_path = "Emulation"
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !filepath.IsAbs(cfg.Sync.EmulationPath) {
-		t.Errorf("emulation_path should be absolute, got %q", cfg.Sync.EmulationPath)
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, "emu-sync", "Emulation")
+	if cfg.Sync.EmulationPath != want {
+		t.Errorf("emulation_path = %q, want %q", cfg.Sync.EmulationPath, want)
 	}
 }
 

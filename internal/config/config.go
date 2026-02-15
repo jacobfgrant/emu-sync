@@ -93,20 +93,22 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// expandPath resolves ~ to the home directory and converts relative
-// paths to absolute paths.
+// expandPath resolves ~ and relative paths to absolute paths.
+// Relative paths are resolved against the user's home directory
+// (not the working directory) so the result is stable regardless
+// of where the command is run from.
 func expandPath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
 	if strings.HasPrefix(p, "~/") || p == "~" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			p = filepath.Join(home, p[1:])
-		}
+		return filepath.Join(home, p[2:])
 	}
-	abs, err := filepath.Abs(p)
-	if err == nil {
-		p = abs
-	}
-	return p
+	return filepath.Join(home, p)
 }
 
 // ShouldSync returns true if the given key passes the sync_dirs include
