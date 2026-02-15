@@ -1,3 +1,31 @@
+# Built binary
 emu-sync
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# GoReleaser
 dist/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test and temp
 tmp/
+*.prof
+coverage.out
