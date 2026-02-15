@@ -79,6 +79,10 @@ func installLinux(binPath string) error {
 		return fmt.Errorf("finding home directory: %w", err)
 	}
 
+	// Stop existing timer before overwriting unit files
+	_ = exec.Command("systemctl", "--user", "stop", "emu-sync.timer").Run()
+	_ = exec.Command("systemctl", "--user", "disable", "emu-sync.timer").Run()
+
 	// Install systemd units
 	systemdDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(systemdDir, 0o755); err != nil {
