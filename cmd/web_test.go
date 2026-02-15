@@ -421,6 +421,47 @@ func TestHandleSaveAndExitConcurrent(t *testing.T) {
 	}
 }
 
+func TestHandleExit(t *testing.T) {
+	ws := &webServer{
+		done: make(chan struct{}),
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/exit", nil)
+	ws.handleExit(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	select {
+	case <-ws.done:
+	default:
+		t.Error("expected done channel to be closed after exit")
+	}
+}
+
+func TestHandleExitRejectsGet(t *testing.T) {
+	ws := &webServer{
+		done: make(chan struct{}),
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/exit", nil)
+	ws.handleExit(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+
+	// done should still be open
+	select {
+	case <-ws.done:
+		t.Error("expected done channel to remain open after rejected GET")
+	default:
+	}
+}
+
 func TestHandleWait(t *testing.T) {
 	ws := &webServer{
 		shutdown: make(chan struct{}),

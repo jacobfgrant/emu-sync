@@ -207,6 +207,17 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (ws *webServer) handleExit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	ws.exitOnce.Do(func() { close(ws.done) })
+}
+
 func (ws *webServer) handleWait(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-ws.shutdown:
@@ -532,6 +543,7 @@ selections, sync files, and verify local integrity.`,
 		mux.HandleFunc("/", ws.handleIndex)
 		mux.HandleFunc("/api/systems", ws.handleSystems)
 		mux.HandleFunc("/api/save", ws.handleSave)
+		mux.HandleFunc("/api/exit", ws.handleExit)
 		mux.HandleFunc("/api/wait", ws.handleWait)
 		mux.HandleFunc("/api/sync", ws.handleSync)
 		mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
@@ -559,10 +571,10 @@ selections, sync files, and verify local integrity.`,
 		errCh := make(chan error, 1)
 		go func() { errCh <- ws.server.Serve(listener) }()
 
-		// Wait for Save & Exit, Ctrl+C, or server error
+		// Wait for exit, Ctrl+C, or server error
 		select {
 		case <-ws.done:
-			fmt.Printf("\nConfig saved. Shutting down.\n")
+			fmt.Println("\nShutting down.")
 		case <-cmd.Context().Done():
 			fmt.Println("\nShutting down.")
 		case err := <-errCh:

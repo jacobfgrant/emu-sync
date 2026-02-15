@@ -411,14 +411,14 @@ main {
   <div class="footer-inner">
     <button class="btn btn-primary" id="save-btn" disabled>Save</button>
     <button class="btn btn-secondary" id="exit-btn" disabled>Save &amp; Exit</button>
+    <button class="btn btn-secondary" id="quit-btn" disabled>Exit</button>
     <div class="footer-separator"></div>
+    <button class="btn btn-secondary" id="verify-btn" disabled>Verify</button>
+    <button class="btn btn-secondary" id="sync-btn" disabled>Sync</button>
     <label class="delete-toggle" id="delete-toggle-label">
       <input type="checkbox" id="delete-toggle">
-      <span>Remove deselected games</span>
+      <span>Remove deselected files</span>
     </label>
-    <div class="footer-separator"></div>
-    <button class="btn btn-secondary" id="sync-btn" disabled>Sync</button>
-    <button class="btn btn-secondary" id="verify-btn" disabled>Verify</button>
     <span class="status-msg" id="op-status" style="display:none"></span>
     <span class="status-msg" id="status-msg"></span>
   </div>
@@ -605,6 +605,7 @@ main {
     updateTotals();
     document.getElementById("save-btn").disabled = false;
     document.getElementById("exit-btn").disabled = false;
+    document.getElementById("quit-btn").disabled = false;
     document.getElementById("sync-btn").disabled = false;
     document.getElementById("verify-btn").disabled = false;
   }
@@ -623,6 +624,7 @@ main {
   function enableButtons() {
     document.getElementById("save-btn").disabled = false;
     document.getElementById("exit-btn").disabled = false;
+    document.getElementById("quit-btn").disabled = false;
     if (!syncing) {
       document.getElementById("sync-btn").disabled = false;
       document.getElementById("verify-btn").disabled = false;
@@ -632,6 +634,7 @@ main {
   function disableButtons() {
     document.getElementById("save-btn").disabled = true;
     document.getElementById("exit-btn").disabled = true;
+    document.getElementById("quit-btn").disabled = true;
     document.getElementById("sync-btn").disabled = true;
     document.getElementById("verify-btn").disabled = true;
   }
@@ -1035,6 +1038,17 @@ main {
   });
   document.getElementById("exit-btn").addEventListener("click", function() {
     doSave(true);
+  });
+  document.getElementById("quit-btn").addEventListener("click", function() {
+    disableButtons();
+    var msg = document.getElementById("status-msg");
+    msg.textContent = "Closing...";
+    msg.className = "status-msg";
+    fetch("/api/exit", { method: "POST" }).catch(function() {});
+    window.close();
+    setTimeout(function() {
+      msg.textContent = "Server stopped. You can close this tab.";
+    }, 500);
   });
   document.getElementById("sync-btn").addEventListener("click", doSync);
   document.getElementById("verify-btn").addEventListener("click", doVerify);
