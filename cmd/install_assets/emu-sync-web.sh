@@ -1,2 +1,3 @@
 #!/bin/bash
-exec BINARY_PATH web
+BINARY_PATH web &
+disown
