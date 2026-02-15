@@ -70,13 +70,14 @@ func (el *eventLog) read(from int) ([]string, bool) {
 }
 
 type webServer struct {
-	groups   []*systemGroup
-	cfg      *config.Config
-	cfgPath  string
-	server   *http.Server
-	done     chan struct{} // closed when Save & Exit is clicked
-	shutdown chan struct{} // closed just before server.Shutdown in all exit paths
-	exitOnce sync.Once
+	groups            []*systemGroup
+	cfg               *config.Config
+	cfgPath           string
+	localManifestPath string       // overrides default; used by tests
+	server            *http.Server
+	done              chan struct{} // closed when Save & Exit is clicked
+	shutdown          chan struct{} // closed just before server.Shutdown in all exit paths
+	exitOnce          sync.Once
 
 	client     storage.Backend   // for sync operations
 	syncMu     sync.Mutex       // guards sync state below
@@ -414,7 +415,7 @@ func (ws *webServer) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := intsync.Verify(ws.cfg, "", false)
+	result, err := intsync.Verify(ws.cfg, ws.localManifestPath, false)
 	resp := map[string]interface{}{}
 	if err != nil {
 		resp["error"] = err.Error()

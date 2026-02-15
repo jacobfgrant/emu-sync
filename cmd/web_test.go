@@ -972,19 +972,16 @@ func TestHandleVerifyReturnsMissingFiles(t *testing.T) {
 		Size: 100,
 	}
 
-	// Save to the default location so Verify finds it
-	localManifestPath := config.DefaultLocalManifestPath()
-	os.MkdirAll(filepath.Dir(localManifestPath), 0o755)
+	localManifestPath := filepath.Join(tmpDir, "local-manifest.json")
 	mdata, _ := json.Marshal(m)
 	os.WriteFile(localManifestPath, mdata, 0o644)
-	defer os.Remove(localManifestPath)
 
 	cfg := &config.Config{
 		Sync: config.SyncConfig{
 			EmulationPath: emuPath,
 		},
 	}
-	ws := &webServer{cfg: cfg}
+	ws := &webServer{cfg: cfg, localManifestPath: localManifestPath}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/verify", nil)
