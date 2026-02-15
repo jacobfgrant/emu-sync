@@ -127,40 +127,7 @@ in a system. Saves selections to your config file.`,
 			drillInto(reader, groups[idx-1])
 		}
 
-		// Build sync_dirs and sync_exclude from selections
-		var syncDirs []string
-		var syncExclude []string
-
-		for _, g := range groups {
-			state := g.groupState()
-			switch state {
-			case "all":
-				syncDirs = append(syncDirs, g.Dir)
-			case "partial":
-				// Decide whether to include the dir + exclude some,
-				// or include individual files, based on which is shorter
-				excluded := len(g.Files) - g.selectedCount()
-				selected := g.selectedCount()
-				if excluded < selected {
-					// Fewer exclusions — include dir, exclude specific files
-					syncDirs = append(syncDirs, g.Dir)
-					for _, f := range g.Files {
-						if !f.Selected {
-							syncExclude = append(syncExclude, f.Key)
-						}
-					}
-				} else {
-					// Fewer inclusions — add individual files
-					for _, f := range g.Files {
-						if f.Selected {
-							syncDirs = append(syncDirs, f.Key)
-						}
-					}
-				}
-			}
-			// "none" — nothing to add
-		}
-
+		syncDirs, syncExclude := encodeSelections(groups)
 		cfg.Sync.SyncDirs = syncDirs
 		cfg.Sync.SyncExclude = syncExclude
 
@@ -175,6 +142,37 @@ in a system. Saves selections to your config file.`,
 		}
 		return nil
 	},
+}
+
+// encodeSelections converts group selections into sync_dirs and sync_exclude
+// slices for the config file. For partial groups, it picks whichever
+// representation is shorter: dir + exclusions, or individual file inclusions.
+func encodeSelections(groups []*systemGroup) (syncDirs, syncExclude []string) {
+	for _, g := range groups {
+		state := g.groupState()
+		switch state {
+		case "all":
+			syncDirs = append(syncDirs, g.Dir)
+		case "partial":
+			excluded := len(g.Files) - g.selectedCount()
+			selected := g.selectedCount()
+			if excluded < selected {
+				syncDirs = append(syncDirs, g.Dir)
+				for _, f := range g.Files {
+					if !f.Selected {
+						syncExclude = append(syncExclude, f.Key)
+					}
+				}
+			} else {
+				for _, f := range g.Files {
+					if f.Selected {
+						syncDirs = append(syncDirs, f.Key)
+					}
+				}
+			}
+		}
+	}
+	return syncDirs, syncExclude
 }
 
 // buildGroups aggregates manifest files into system-level groups and marks
