@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>emu-sync</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #ffffff;
+  --bg-card: #f8f9fa;
+  --bg-header: #ffffff;
+  --text: #1a1a1a;
+  --text-secondary: #6b7280;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --checkbox-bg: #ffffff;
+  --checkbox-border: #d1d5db;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111827;
+    --bg-card: #1f2937;
+    --bg-header: #111827;
+    --text: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --border: #374151;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --checkbox-bg: #374151;
+    --checkbox-border: #4b5563;
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 20px;
+}
+
+.header-inner {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.header .totals {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.header .totals .selected-size {
+  color: var(--text);
+  font-weight: 600;
+}
+
+main {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 16px 20px 120px;
+}
+
+.loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-secondary);
+}
+
+.system-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.system-card summary {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  gap: 12px;
+  min-height: 48px;
+  list-style: none;
+}
+
+.system-card summary::-webkit-details-marker { display: none; }
+
+.system-card summary::after {
+  content: "\25B6";
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-left: auto;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.system-card[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.system-checkbox {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.system-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-meta {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.system-actions {
+  display: flex;
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+
+.system-actions button {
+  font-size: 0.8rem;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.system-actions button:hover {
+  color: var(--text);
+  border-color: var(--text-secondary);
+}
+
+.file-list {
+  border-top: 1px solid var(--border);
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.file-row:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.file-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.file-size {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-header);
+  border-top: 1px solid var(--border);
+  padding: 16px 20px;
+  z-index: 10;
+}
+
+.footer-inner {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.save-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 32px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.save-btn:hover { background: var(--accent-hover); }
+.save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.status-msg {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.status-msg.success { color: var(--success); font-weight: 600; }
+.status-msg.error { color: var(--danger); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1>emu-sync</h1>
+    <div class="totals">
+      <span class="selected-size" id="selected-size">--</span>
+      <span> of </span>
+      <span id="total-size">--</span>
+      <span> selected</span>
+    </div>
+  </div>
+</div>
+
+<main id="main">
+  <div class="loading" id="loading">Loading systems...</div>
+</main>
+
+<div class="footer">
+  <div class="footer-inner">
+    <button class="save-btn" id="save-btn" disabled>Save</button>
+    <span class="status-msg" id="status-msg"></span>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var systems = [];
+
+  function formatSize(bytes) {
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
+    if (bytes >= 1048576) return Math.round(bytes / 1048576) + " MB";
+    if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
+    return bytes + " B";
+  }
+
+  function computeTotals() {
+    var selected = 0, total = 0;
+    for (var i = 0; i < systems.length; i++) {
+      var s = systems[i];
+      total += s.totalSize;
+      for (var j = 0; j < s.files.length; j++) {
+        if (s.files[j].selected) selected += s.files[j].size;
+      }
+    }
+    return { selected: selected, total: total };
+  }
+
+  function updateTotals() {
+    var t = computeTotals();
+    document.getElementById("selected-size").textContent = formatSize(t.selected);
+    document.getElementById("total-size").textContent = formatSize(t.total);
+  }
+
+  function systemState(sys) {
+    var sel = 0;
+    for (var i = 0; i < sys.files.length; i++) {
+      if (sys.files[i].selected) sel++;
+    }
+    if (sel === 0) return "none";
+    if (sel === sys.files.length) return "all";
+    return "partial";
+  }
+
+  function updateSystemCheckbox(sysIdx) {
+    var cb = document.getElementById("sys-cb-" + sysIdx);
+    var state = systemState(systems[sysIdx]);
+    cb.checked = state !== "none";
+    cb.indeterminate = state === "partial";
+    var meta = document.getElementById("sys-meta-" + sysIdx);
+    var sys = systems[sysIdx];
+    var sel = 0;
+    for (var i = 0; i < sys.files.length; i++) {
+      if (sys.files[i].selected) sel++;
+    }
+    meta.textContent = sel + "/" + sys.files.length + " files \u00B7 " + sys.totalSizeFormatted;
+  }
+
+  function setAllFiles(sysIdx, value) {
+    var sys = systems[sysIdx];
+    for (var i = 0; i < sys.files.length; i++) {
+      sys.files[i].selected = value;
+      var fcb = document.getElementById("file-cb-" + sysIdx + "-" + i);
+      if (fcb) fcb.checked = value;
+    }
+    updateSystemCheckbox(sysIdx);
+    updateTotals();
+  }
+
+  function render() {
+    var main = document.getElementById("main");
+    main.innerHTML = "";
+
+    for (var si = 0; si < systems.length; si++) {
+      var sys = systems[si];
+      var card = document.createElement("details");
+      card.className = "system-card";
+
+      var summary = document.createElement("summary");
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "system-checkbox";
+      cb.id = "sys-cb-" + si;
+      cb.dataset.sysIdx = si;
+      cb.addEventListener("change", (function(idx) {
+        return function(e) {
+          e.stopPropagation();
+          setAllFiles(idx, e.target.checked);
+        };
+      })(si));
+      cb.addEventListener("click", function(e) { e.stopPropagation(); });
+
+      var name = document.createElement("span");
+      name.className = "system-name";
+      name.textContent = sys.dir;
+
+      var meta = document.createElement("span");
+      meta.className = "system-meta";
+      meta.id = "sys-meta-" + si;
+
+      summary.appendChild(cb);
+      summary.appendChild(name);
+      summary.appendChild(meta);
+      card.appendChild(summary);
+
+      var actions = document.createElement("div");
+      actions.className = "system-actions";
+
+      var selAllBtn = document.createElement("button");
+      selAllBtn.textContent = "Select All";
+      selAllBtn.addEventListener("click", (function(idx) {
+        return function() { setAllFiles(idx, true); };
+      })(si));
+
+      var deselBtn = document.createElement("button");
+      deselBtn.textContent = "Deselect All";
+      deselBtn.addEventListener("click", (function(idx) {
+        return function() { setAllFiles(idx, false); };
+      })(si));
+
+      actions.appendChild(selAllBtn);
+      actions.appendChild(deselBtn);
+      card.appendChild(actions);
+
+      var fileList = document.createElement("div");
+      fileList.className = "file-list";
+
+      for (var fi = 0; fi < sys.files.length; fi++) {
+        var file = sys.files[fi];
+        var row = document.createElement("div");
+        row.className = "file-row";
+
+        var fcb = document.createElement("input");
+        fcb.type = "checkbox";
+        fcb.className = "file-checkbox";
+        fcb.id = "file-cb-" + si + "-" + fi;
+        fcb.checked = file.selected;
+        fcb.dataset.sysIdx = si;
+        fcb.dataset.fileIdx = fi;
+        fcb.addEventListener("change", (function(sIdx, fIdx) {
+          return function(e) {
+            systems[sIdx].files[fIdx].selected = e.target.checked;
+            updateSystemCheckbox(sIdx);
+            updateTotals();
+          };
+        })(si, fi));
+
+        var fname = document.createElement("span");
+        fname.className = "file-name";
+        fname.textContent = file.name;
+
+        var fsize = document.createElement("span");
+        fsize.className = "file-size";
+        fsize.textContent = file.sizeFormatted;
+
+        row.appendChild(fcb);
+        row.appendChild(fname);
+        row.appendChild(fsize);
+        fileList.appendChild(row);
+      }
+
+      card.appendChild(fileList);
+      main.appendChild(card);
+      updateSystemCheckbox(si);
+    }
+
+    updateTotals();
+    document.getElementById("save-btn").disabled = false;
+  }
+
+  function buildSelections() {
+    var sel = {};
+    for (var i = 0; i < systems.length; i++) {
+      for (var j = 0; j < systems[i].files.length; j++) {
+        var f = systems[i].files[j];
+        sel[f.key] = f.selected;
+      }
+    }
+    return sel;
+  }
+
+  function save() {
+    var btn = document.getElementById("save-btn");
+    var msg = document.getElementById("status-msg");
+    btn.disabled = true;
+    msg.textContent = "Saving...";
+    msg.className = "status-msg";
+
+    fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selections: buildSelections() })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        msg.textContent = "Saved to " + data.configPath + ". You can close this tab.";
+        msg.className = "status-msg success";
+      } else {
+        msg.textContent = "Error: " + (data.error || "unknown");
+        msg.className = "status-msg error";
+        btn.disabled = false;
+      }
+    })
+    .catch(function(err) {
+      msg.textContent = "Error: " + err.message;
+      msg.className = "status-msg error";
+      btn.disabled = false;
+    });
+  }
+
+  document.getElementById("save-btn").addEventListener("click", save);
+
+  fetch("/api/systems")
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      systems = data.systems || [];
+      render();
+    })
+    .catch(function(err) {
+      document.getElementById("loading").textContent = "Error loading: " + err.message;
+    });
+})();
+</script>
+</body>
+</html>
