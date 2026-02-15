@@ -50,6 +50,20 @@ their devices with a single 'emu-sync setup <token>' command.`,
 
 		emuPath := promptWithDefault(reader, "Emulation path", cfg.Sync.EmulationPath)
 
+		syncDirsDefault := strings.Join(cfg.Sync.SyncDirs, ",")
+		syncDirsStr := promptWithDefault(reader, "Sync directories (comma-separated)", syncDirsDefault)
+		var syncDirs []string
+		for _, d := range strings.Split(syncDirsStr, ",") {
+			syncDirs = append(syncDirs, strings.TrimSpace(d))
+		}
+
+		deleteDefault := "y"
+		if !cfg.Sync.Delete {
+			deleteDefault = "n"
+		}
+		deleteStr := promptWithDefault(reader, "Delete local files removed from bucket? (y/n)", deleteDefault)
+		deleteFiles := strings.HasPrefix(strings.ToLower(deleteStr), "y")
+
 		data := &token.Data{
 			EndpointURL:   endpoint,
 			Bucket:        bucket,
@@ -58,6 +72,8 @@ their devices with a single 'emu-sync setup <token>' command.`,
 			Region:        region,
 			Prefix:        prefix,
 			EmulationPath: emuPath,
+			SyncDirs:      syncDirs,
+			Delete:        &deleteFiles,
 		}
 
 		encoded, err := token.Encode(data)

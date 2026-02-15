@@ -10,13 +10,15 @@ import (
 
 // Data holds the fields encoded in a setup token.
 type Data struct {
-	EndpointURL   string `json:"endpoint_url"`
-	Bucket        string `json:"bucket"`
-	KeyID         string `json:"key_id"`
-	SecretKey     string `json:"secret_key"`
-	Region        string `json:"region"`
-	Prefix        string `json:"prefix,omitempty"`
-	EmulationPath string `json:"emulation_path"`
+	EndpointURL   string   `json:"endpoint_url"`
+	Bucket        string   `json:"bucket"`
+	KeyID         string   `json:"key_id"`
+	SecretKey     string   `json:"secret_key"`
+	Region        string   `json:"region"`
+	Prefix        string   `json:"prefix,omitempty"`
+	EmulationPath string   `json:"emulation_path"`
+	SyncDirs      []string `json:"sync_dirs,omitempty"`
+	Delete        *bool    `json:"delete,omitempty"`
 }
 
 // Encode creates a base64 token from token data.
@@ -49,6 +51,16 @@ func Decode(tokenStr string) (*Data, error) {
 
 // ToConfig converts token data into a full Config.
 func (d *Data) ToConfig() *config.Config {
+	syncDirs := d.SyncDirs
+	if len(syncDirs) == 0 {
+		syncDirs = []string{"roms", "bios"}
+	}
+
+	deleteFiles := true
+	if d.Delete != nil {
+		deleteFiles = *d.Delete
+	}
+
 	return &config.Config{
 		Storage: config.StorageConfig{
 			EndpointURL: d.EndpointURL,
@@ -60,14 +72,15 @@ func (d *Data) ToConfig() *config.Config {
 		},
 		Sync: config.SyncConfig{
 			EmulationPath: d.EmulationPath,
-			SyncDirs:      []string{"roms", "bios"},
-			Delete:        true,
+			SyncDirs:      syncDirs,
+			Delete:        deleteFiles,
 		},
 	}
 }
 
 // FromConfig creates token data from an existing config.
 func FromConfig(cfg *config.Config) *Data {
+	delete := cfg.Sync.Delete
 	return &Data{
 		EndpointURL:   cfg.Storage.EndpointURL,
 		Bucket:        cfg.Storage.Bucket,
@@ -76,5 +89,7 @@ func FromConfig(cfg *config.Config) *Data {
 		Region:        cfg.Storage.Region,
 		Prefix:        cfg.Storage.Prefix,
 		EmulationPath: cfg.Sync.EmulationPath,
+		SyncDirs:      cfg.Sync.SyncDirs,
+		Delete:        &delete,
 	}
 }
