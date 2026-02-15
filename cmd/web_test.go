@@ -165,12 +165,12 @@ func TestHandleSave(t *testing.T) {
 		t.Error("expected roms/gba NOT in config")
 	}
 
-	// Verify done channel was closed
+	// Save without exit should NOT close done channel
 	select {
 	case <-ws.done:
-		// good
+		t.Error("expected done channel to remain open after save without exit")
 	default:
-		t.Error("expected done channel to be closed")
+		// good
 	}
 }
 
@@ -189,7 +189,7 @@ func TestHandleSaveRejectsNonPost(t *testing.T) {
 	}
 }
 
-func TestHandleSaveConcurrent(t *testing.T) {
+func TestHandleSaveAndExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.toml")
 
@@ -212,7 +212,120 @@ func TestHandleSaveConcurrent(t *testing.T) {
 		done:    make(chan struct{}),
 	}
 
-	body := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true}}`
+	body := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true},"exit":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/save", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ws.handleSave(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Verify config written
+	if _, err := os.ReadFile(cfgPath); err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+
+	// Verify done channel was closed
+	select {
+	case <-ws.done:
+		// good
+	default:
+		t.Error("expected done channel to be closed after save with exit")
+	}
+}
+
+func TestHandleSaveMultipleTimes(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Bucket:    "test",
+			KeyID:     "key",
+			SecretKey: "secret",
+		},
+		Sync: config.SyncConfig{
+			EmulationPath: "/tmp/emu",
+			SyncDirs:      []string{"roms"},
+		},
+	}
+
+	ws := &webServer{
+		groups:  testGroups(),
+		cfg:     cfg,
+		cfgPath: cfgPath,
+		done:    make(chan struct{}),
+	}
+
+	// First save: select only snes
+	body1 := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":false,"roms/gba/GameD.gba":false}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/save", strings.NewReader(body1))
+	req.Header.Set("Content-Type", "application/json")
+	ws.handleSave(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("first save: expected 200, got %d", rec.Code)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(data), "roms/snes") {
+		t.Error("first save: expected roms/snes in config")
+	}
+	if strings.Contains(string(data), "roms/gba") {
+		t.Error("first save: expected roms/gba NOT in config")
+	}
+
+	// Second save: now also select gba
+	body2 := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true}}`
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/save", strings.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	ws.handleSave(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Fatalf("second save: expected 200, got %d", rec2.Code)
+	}
+
+	data2, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(data2), "roms/gba") {
+		t.Error("second save: expected roms/gba in config")
+	}
+
+	// done channel should still be open
+	select {
+	case <-ws.done:
+		t.Error("expected done channel to remain open")
+	default:
+	}
+}
+
+func TestHandleSaveAndExitConcurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Bucket:    "test",
+			KeyID:     "key",
+			SecretKey: "secret",
+		},
+		Sync: config.SyncConfig{
+			EmulationPath: "/tmp/emu",
+			SyncDirs:      []string{"roms"},
+		},
+	}
+
+	ws := &webServer{
+		groups:  testGroups(),
+		cfg:     cfg,
+		cfgPath: cfgPath,
+		done:    make(chan struct{}),
+	}
+
+	body := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true},"exit":true}`
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {

@@ -26,7 +26,7 @@ type webServer struct {
 	cfgPath  string
 	server   *http.Server
 	done     chan struct{}
-	saveOnce sync.Once
+	exitOnce sync.Once
 }
 
 type systemJSON struct {
@@ -57,6 +57,7 @@ type systemsResponse struct {
 
 type saveRequest struct {
 	Selections map[string]bool `json:"selections"`
+	Exit       bool            `json:"exit"`
 }
 
 type saveResponse struct {
@@ -149,8 +150,9 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(saveResponse{OK: true, ConfigPath: ws.cfgPath})
 
-	// Signal shutdown after response is sent
-	ws.saveOnce.Do(func() { close(ws.done) })
+	if req.Exit {
+		ws.exitOnce.Do(func() { close(ws.done) })
+	}
 }
 
 func openBrowser(url string) {
@@ -228,7 +230,7 @@ selections. The config file is updated when you click Save.`,
 		url := fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port)
 
 		fmt.Printf("Opening %s\n", url)
-		fmt.Println("Press Ctrl+C to cancel without saving.")
+		fmt.Println("Press Ctrl+C to quit without saving.")
 		openBrowser(url)
 
 		// Run server in background
@@ -238,9 +240,9 @@ selections. The config file is updated when you click Save.`,
 		// Wait for save, context cancellation, or server error
 		select {
 		case <-ws.done:
-			fmt.Printf("\nConfig saved to %s\n", cfgPath)
+			fmt.Printf("\nConfig saved. Shutting down.\n")
 		case <-cmd.Context().Done():
-			fmt.Println("\nCancelled.")
+			fmt.Println("\nShutting down.")
 		case err := <-errCh:
 			return err
 		}
