@@ -182,6 +182,47 @@ emulation_path = "emu-sync/Emulation"
 	}
 }
 
+func TestShouldSync(t *testing.T) {
+	cfg := &Config{
+		Sync: SyncConfig{
+			SyncDirs:    []string{"roms", "bios"},
+			SyncExclude: []string{"roms/snes/Bad.sfc"},
+		},
+	}
+
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"roms/snes/Game.sfc", true},
+		{"roms/gba/Game.gba", true},
+		{"bios/scph5501.bin", true},
+		{"saves/game.sav", false},
+		{"roms/snes/Bad.sfc", false}, // excluded
+		{"roms", true},               // exact dir match
+		{"romshack/file", false},     // "roms" prefix but not "roms/"
+	}
+
+	for _, tt := range tests {
+		got := cfg.ShouldSync(tt.key)
+		if got != tt.want {
+			t.Errorf("ShouldSync(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestShouldSyncEmptyExclude(t *testing.T) {
+	cfg := &Config{
+		Sync: SyncConfig{
+			SyncDirs: []string{"roms"},
+		},
+	}
+
+	if !cfg.ShouldSync("roms/snes/Game.sfc") {
+		t.Error("ShouldSync should work with empty exclude list")
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

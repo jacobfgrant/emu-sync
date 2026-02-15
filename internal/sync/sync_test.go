@@ -150,7 +150,12 @@ func TestSyncNoDeleteFlag(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(emuDir, "roms/snes/Game.sfc")); os.IsNotExist(err) {
 		t.Error("Game.sfc should NOT have been deleted with NoDelete")
 	}
-	_ = result
+	if len(result.Deleted) != 0 {
+		t.Errorf("deleted %d, want 0 with NoDelete", len(result.Deleted))
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("errors = %d, want 0", len(result.Errors))
+	}
 }
 
 func TestSyncDryRun(t *testing.T) {
