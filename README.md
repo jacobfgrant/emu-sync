@@ -9,6 +9,7 @@ Sync ROMs and BIOS files from an S3-compatible bucket to one or more devices.
 - **Delete propagation** — optionally removes local files that were deleted from the bucket
 - **Parallel downloads** — configurable worker count for faster syncs
 - **Setup tokens** — generate a single token that configures a recipient's device in one command
+- **Interactive game selection** — choose which systems and individual games to sync
 - **Systemd integration** — auto-install a timer that syncs every 6 hours (Linux/SteamOS)
 - **Integrity verification** — re-hash local files to detect corruption
 
@@ -38,6 +39,9 @@ curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.
 # Configure from the token the admin sent you
 emu-sync setup <token>
 
+# Choose which systems/games to sync (optional — syncs everything by default)
+emu-sync choose
+
 # Sync files
 emu-sync sync --verbose
 
@@ -53,6 +57,7 @@ emu-sync install
 | `setup <token>` | Configure from a setup token |
 | `upload` | Upload ROMs/BIOS to the bucket |
 | `sync` | Download new/changed files from the bucket |
+| `choose` | Interactively select which systems and games to sync |
 | `status` | Show what would change on next sync |
 | `verify` | Check local files against the manifest |
 | `generate-token` | Create a setup token for recipients |
@@ -68,6 +73,7 @@ emu-sync install
 | `--dry-run` | `upload`, `sync` | Show what would happen without making changes |
 | `--no-delete` | `sync` | Skip deleting files removed from bucket |
 | `--workers N` | `sync` | Parallel download workers (default 1) |
+| `--manifest-only` | `upload` | Regenerate manifest without uploading files |
 | `--progress-json` | `sync` | Emit JSON progress events to stdout |
 
 ## Storage provider setup
@@ -127,6 +133,7 @@ region = "us-west-002"
 [sync]
 emulation_path = "/run/media/mmcblk0p1/Emulation"
 sync_dirs = ["roms", "bios"]
+# sync_exclude = ["roms/ps2/Some Huge Game.iso"]  # optional: exclude specific files
 delete = true
 workers = 4
 ```
@@ -135,7 +142,7 @@ workers = 4
 
 emu-sync uses a **manifest-based delta sync** approach:
 
-1. **Upload** walks your source directories, hashes every file (SHA-256), and compares against the remote manifest stored in the bucket. Only new or changed files are uploaded. The updated manifest is written to the bucket.
+1. **Upload** walks your source directories, hashes every file (MD5), and compares against the remote manifest stored in the bucket. Only new or changed files are uploaded. The updated manifest is written to the bucket.
 
 2. **Sync** downloads the remote manifest and compares it against the local manifest on the device. Files that are new or have a different hash are downloaded. Files present locally but absent from the remote manifest are optionally deleted.
 
