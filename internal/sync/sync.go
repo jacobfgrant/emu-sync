@@ -12,6 +12,7 @@ import (
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
 	"github.com/jacobfgrant/emu-sync/internal/progress"
+	"github.com/jacobfgrant/emu-sync/internal/retry"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 )
 
@@ -23,6 +24,7 @@ type Options struct {
 	NoDelete          bool
 	Verbose           bool
 	Workers           int                // number of parallel downloads; 0 or 1 = sequential
+	MaxRetries        int                // per-file retries with backoff; 0 = no retries
 	Progress          *progress.Reporter // emits JSON progress events; nil = no-op
 	LocalManifestPath string             // overrides default; used by tests
 }
@@ -172,12 +174,16 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 func downloadSequential(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
 	prog := opts.Progress
+	maxRetries := opts.MaxRetries
 	for _, key := range keys {
 		entry := filteredRemote.Files[key]
 		if prog != nil {
 			prog.Start(key, entry.Size)
 		}
-		if err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose); err != nil {
+		err := retry.WithBackoff(ctx, maxRetries, func() error {
+			return downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose)
+		})
+		if err != nil {
 			result.Errors = append(result.Errors, err)
 			if prog != nil {
 				prog.FileError(key, err)
@@ -198,6 +204,8 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 	// Channel for collecting results from workers
 	results := make(chan downloadResult, len(keys))
 
+	maxRetries := opts.MaxRetries
+
 	// Start worker goroutines
 	var wg gosync.WaitGroup
 	for i := 0; i < opts.Workers; i++ {
@@ -209,7 +217,9 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 				if opts.Progress != nil {
 					opts.Progress.Start(key, entry.Size)
 				}
-				err := downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose)
+				err := retry.WithBackoff(ctx, maxRetries, func() error {
+					return downloadOne(ctx, client, cfg.Sync.EmulationPath, key, opts.Verbose)
+				})
 				results <- downloadResult{
 					key:   key,
 					entry: entry,

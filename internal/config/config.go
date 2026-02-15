@@ -26,6 +26,7 @@ type SyncConfig struct {
 	SyncExclude   []string `toml:"sync_exclude,omitempty"`
 	Delete        bool     `toml:"delete"`
 	Workers       int      `toml:"workers"`
+	MaxRetries    int      `toml:"max_retries"`
 }
 
 // Config is the top-level configuration.

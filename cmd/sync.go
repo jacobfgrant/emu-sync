@@ -37,12 +37,18 @@ were removed from the bucket.`,
 			workers = cfg.Sync.Workers
 		}
 
+		maxRetries := cfg.Sync.MaxRetries
+		if maxRetries == 0 {
+			maxRetries = 3
+		}
+
 		client := storage.NewClient(&cfg.Storage)
 		opts := intsync.Options{
-			DryRun:   syncDryRun,
-			NoDelete: syncNoDelete,
-			Verbose:  verbose,
-			Workers:  workers,
+			DryRun:     syncDryRun,
+			NoDelete:   syncNoDelete,
+			Verbose:    verbose,
+			Workers:    workers,
+			MaxRetries: maxRetries,
 		}
 		if syncProgressJSON {
 			opts.Progress = progress.NewReporter(true)
