@@ -317,6 +317,46 @@ main {
   font-size: 0.9rem;
   font-weight: 500;
 }
+
+.progress-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-top: 16px;
+  background: var(--bg-card);
+  padding: 16px;
+}
+
+.progress-header {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
+.progress-counter {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.progress-errors {
+  font-size: 0.825rem;
+  color: var(--danger);
+  margin-top: 8px;
+}
+
+.progress-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: pre-line;
+  margin-top: 8px;
+}
+
+.footer-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  flex-shrink: 0;
+}
 </style>
 </head>
 <body>
@@ -341,6 +381,9 @@ main {
   <div class="footer-inner">
     <button class="btn btn-primary" id="save-btn" disabled>Save</button>
     <button class="btn btn-secondary" id="exit-btn" disabled>Save &amp; Exit</button>
+    <div class="footer-separator"></div>
+    <button class="btn btn-secondary" id="sync-btn" disabled>Sync</button>
+    <button class="btn btn-secondary" id="verify-btn" disabled>Verify</button>
     <span class="status-msg" id="status-msg"></span>
   </div>
 </div>
@@ -351,6 +394,9 @@ main {
 
   var systems = [];
   var saving = false;
+  var syncing = false;
+  var verifying = false;
+  var syncEventSource = null;
 
   function formatSize(bytes) {
     if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
@@ -523,6 +569,8 @@ main {
     updateTotals();
     document.getElementById("save-btn").disabled = false;
     document.getElementById("exit-btn").disabled = false;
+    document.getElementById("sync-btn").disabled = false;
+    document.getElementById("verify-btn").disabled = false;
   }
 
   function buildSelections() {
@@ -536,14 +584,27 @@ main {
     return sel;
   }
 
+  function enableButtons() {
+    document.getElementById("save-btn").disabled = false;
+    document.getElementById("exit-btn").disabled = false;
+    if (!syncing) {
+      document.getElementById("sync-btn").disabled = false;
+      document.getElementById("verify-btn").disabled = false;
+    }
+  }
+
+  function disableButtons() {
+    document.getElementById("save-btn").disabled = true;
+    document.getElementById("exit-btn").disabled = true;
+    document.getElementById("sync-btn").disabled = true;
+    document.getElementById("verify-btn").disabled = true;
+  }
+
   function doSave(exit) {
     if (saving) return;
     saving = true;
-    var saveBtn = document.getElementById("save-btn");
-    var exitBtn = document.getElementById("exit-btn");
     var msg = document.getElementById("status-msg");
-    saveBtn.disabled = true;
-    exitBtn.disabled = true;
+    disableButtons();
     msg.textContent = "Saving...";
     msg.className = "status-msg";
 
@@ -560,44 +621,274 @@ main {
           msg.textContent = "Saved. Closing...";
           msg.className = "status-msg success";
           window.close();
-          // If window.close() didn't work (browser may block it)
           setTimeout(function() {
             msg.textContent = "Saved to " + data.configPath + ". You can close this tab.";
           }, 500);
         } else {
           msg.textContent = "Saved to " + data.configPath;
           msg.className = "status-msg success";
-          saveBtn.disabled = false;
-          exitBtn.disabled = false;
+          enableButtons();
         }
       } else {
         msg.textContent = "Error: " + (data.error || "unknown");
         msg.className = "status-msg error";
-        saveBtn.disabled = false;
-        exitBtn.disabled = false;
+        enableButtons();
       }
     })
     .catch(function(err) {
       saving = false;
       msg.textContent = "Error: " + err.message;
       msg.className = "status-msg error";
-      saveBtn.disabled = false;
-      exitBtn.disabled = false;
+      enableButtons();
     });
   }
 
   function showDisconnected() {
+    if (syncEventSource) { syncEventSource.close(); syncEventSource = null; }
     var banner = document.createElement("div");
     banner.className = "disconnected-banner";
     banner.textContent = "Server disconnected. You can close this tab.";
     document.body.insertBefore(banner, document.body.firstChild);
-    document.getElementById("save-btn").disabled = true;
-    document.getElementById("exit-btn").disabled = true;
+    disableButtons();
     document.getElementById("status-msg").textContent = "";
   }
 
   function waitForShutdown() {
     fetch("/api/wait").then(showDisconnected).catch(showDisconnected);
+  }
+
+  function getOrCreateProgress() {
+    var section = document.getElementById("progress-section");
+    if (!section) {
+      section = document.createElement("div");
+      section.id = "progress-section";
+      section.className = "progress-section";
+      document.getElementById("main").appendChild(section);
+    }
+    return section;
+  }
+
+  function showProgress(header, body) {
+    var section = getOrCreateProgress();
+    section.innerHTML = "";
+    var h = document.createElement("div");
+    h.className = "progress-header";
+    h.textContent = header;
+    section.appendChild(h);
+    if (body) {
+      var b = document.createElement("div");
+      b.className = "progress-counter";
+      b.textContent = body;
+      section.appendChild(b);
+    }
+    return section;
+  }
+
+  function doSync() {
+    if (syncing || verifying) return;
+    syncing = true;
+    var syncBtn = document.getElementById("sync-btn");
+    var verifyBtn = document.getElementById("verify-btn");
+    var msg = document.getElementById("status-msg");
+    syncBtn.textContent = "Syncing...";
+    syncBtn.disabled = true;
+    verifyBtn.disabled = true;
+    msg.textContent = "";
+    msg.className = "status-msg";
+
+    var total = 0, downloaded = 0, errors = 0;
+    var errorDetails = [];
+
+    showProgress("Syncing...", "Starting sync...");
+
+    fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selections: buildSelections() })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (!data.ok) {
+        syncing = false;
+        syncBtn.textContent = "Sync";
+        enableButtons();
+        showProgress("Sync failed", data.error || "Unknown error");
+        return;
+      }
+
+      syncEventSource = new EventSource("/api/sync/events");
+      syncEventSource.onmessage = function(e) {
+        var evt;
+        try { evt = JSON.parse(e.data); } catch (_) { return; }
+
+        if (evt.event === "start") {
+          total++;
+        } else if (evt.event === "complete") {
+          downloaded++;
+        } else if (evt.event === "error") {
+          errors++;
+          errorDetails.push(evt.file + ": " + evt.error);
+        }
+
+        if (evt.event === "done") {
+          syncEventSource.close();
+          syncEventSource = null;
+          syncing = false;
+          syncBtn.textContent = "Sync";
+          enableButtons();
+
+          var section = showProgress("Sync complete",
+            "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
+            ", skipped " + evt.skipped +
+            (evt.errors > 0 ? ", " + evt.errors + " errors" : ""));
+
+          if (errorDetails.length > 0) {
+            var errDiv = document.createElement("div");
+            errDiv.className = "progress-errors";
+            errDiv.textContent = errorDetails.join("\n");
+            section.appendChild(errDiv);
+          }
+          return;
+        }
+
+        showProgress("Syncing...",
+          "Downloaded " + downloaded + " of " + total + " files" +
+          (errors > 0 ? " (" + errors + " errors)" : ""));
+      };
+
+      syncEventSource.onerror = function() {
+        syncEventSource.close();
+        syncEventSource = null;
+        pollSyncStatus();
+      };
+    })
+    .catch(function(err) {
+      syncing = false;
+      syncBtn.textContent = "Sync";
+      enableButtons();
+      msg.textContent = "Error: " + err.message;
+      msg.className = "status-msg error";
+    });
+  }
+
+  function pollSyncStatus() {
+    fetch("/api/sync/status")
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.state === "running") {
+        showProgress("Syncing...", "Sync in progress...");
+        setTimeout(pollSyncStatus, 1000);
+      } else if (data.state === "complete" || data.state === "failed") {
+        syncing = false;
+        document.getElementById("sync-btn").textContent = "Sync";
+        enableButtons();
+        var section = showProgress(
+          data.state === "complete" ? "Sync complete" : "Sync failed",
+          data.summary || "");
+        section.querySelector(".progress-counter").className = "progress-summary";
+      } else {
+        syncing = false;
+        document.getElementById("sync-btn").textContent = "Sync";
+        enableButtons();
+      }
+    })
+    .catch(function() {
+      syncing = false;
+      document.getElementById("sync-btn").textContent = "Sync";
+      enableButtons();
+    });
+  }
+
+  function doVerify() {
+    if (syncing || verifying) return;
+    verifying = true;
+    var verifyBtn = document.getElementById("verify-btn");
+    var syncBtn = document.getElementById("sync-btn");
+    var msg = document.getElementById("status-msg");
+    verifyBtn.textContent = "Verifying...";
+    disableButtons();
+    msg.textContent = "";
+    msg.className = "status-msg";
+
+    showProgress("Verifying...", "Checking files against manifest...");
+
+    fetch("/api/verify", { method: "POST" })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      verifying = false;
+      verifyBtn.textContent = "Verify";
+      enableButtons();
+
+      if (data.error) {
+        showProgress("Verify failed", data.error);
+        return;
+      }
+
+      var section = showProgress("Verify complete", data.summary || "");
+      section.querySelector(".progress-counter").className = "progress-summary";
+    })
+    .catch(function(err) {
+      verifying = false;
+      verifyBtn.textContent = "Verify";
+      enableButtons();
+      msg.textContent = "Error: " + err.message;
+      msg.className = "status-msg error";
+    });
+  }
+
+  function checkSyncStatus() {
+    fetch("/api/sync/status")
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.state === "running") {
+        syncing = true;
+        document.getElementById("sync-btn").textContent = "Syncing...";
+        document.getElementById("sync-btn").disabled = true;
+        document.getElementById("verify-btn").disabled = true;
+
+        syncEventSource = new EventSource("/api/sync/events");
+        var total = 0, downloaded = 0, errors = 0;
+
+        showProgress("Syncing...", "Sync in progress...");
+
+        syncEventSource.onmessage = function(e) {
+          var evt;
+          try { evt = JSON.parse(e.data); } catch (_) { return; }
+
+          if (evt.event === "start") total++;
+          else if (evt.event === "complete") downloaded++;
+          else if (evt.event === "error") errors++;
+
+          if (evt.event === "done") {
+            syncEventSource.close();
+            syncEventSource = null;
+            syncing = false;
+            document.getElementById("sync-btn").textContent = "Sync";
+            enableButtons();
+            showProgress("Sync complete",
+              "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
+              ", skipped " + evt.skipped +
+              (evt.errors > 0 ? ", " + evt.errors + " errors" : ""));
+            return;
+          }
+
+          showProgress("Syncing...",
+            "Downloaded " + downloaded + " of " + total + " files" +
+            (errors > 0 ? " (" + errors + " errors)" : ""));
+        };
+        syncEventSource.onerror = function() {
+          syncEventSource.close();
+          syncEventSource = null;
+          pollSyncStatus();
+        };
+      } else if (data.state === "complete" || data.state === "failed") {
+        var section = showProgress(
+          data.state === "complete" ? "Sync complete" : "Sync failed",
+          data.summary || "");
+        section.querySelector(".progress-counter").className = "progress-summary";
+      }
+    })
+    .catch(function() {});
   }
 
   document.getElementById("save-btn").addEventListener("click", function() {
@@ -606,12 +897,15 @@ main {
   document.getElementById("exit-btn").addEventListener("click", function() {
     doSave(true);
   });
+  document.getElementById("sync-btn").addEventListener("click", doSync);
+  document.getElementById("verify-btn").addEventListener("click", doVerify);
 
   fetch("/api/systems")
     .then(function(res) { return res.json(); })
     .then(function(data) {
       systems = data.systems || [];
       render();
+      checkSyncStatus();
       waitForShutdown();
     })
     .catch(function(err) {

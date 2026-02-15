@@ -9,16 +9,65 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
+	"github.com/jacobfgrant/emu-sync/internal/progress"
+	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
+	intsync "github.com/jacobfgrant/emu-sync/internal/sync"
 	"github.com/spf13/cobra"
 )
 
 //go:embed web_assets/index.html
 var webAssets embed.FS
+
+// eventLog captures JSON progress lines and fans them out to SSE clients.
+// Implements io.Writer so it can be passed to progress.NewReporterWriter.
+type eventLog struct {
+	mu     sync.Mutex
+	lines  []string
+	done   bool
+	notify chan struct{} // buffered(1), signaled on new event or finish
+}
+
+func newEventLog() *eventLog {
+	return &eventLog{notify: make(chan struct{}, 1)}
+}
+
+func (el *eventLog) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	el.mu.Lock()
+	el.lines = append(el.lines, line)
+	el.mu.Unlock()
+	select {
+	case el.notify <- struct{}{}:
+	default:
+	}
+	return len(p), nil
+}
+
+func (el *eventLog) finish() {
+	el.mu.Lock()
+	el.done = true
+	el.mu.Unlock()
+	select {
+	case el.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (el *eventLog) read(from int) ([]string, bool) {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	if from >= len(el.lines) {
+		return nil, el.done
+	}
+	return el.lines[from:], el.done
+}
 
 type webServer struct {
 	groups   []*systemGroup
@@ -28,6 +77,12 @@ type webServer struct {
 	done     chan struct{} // closed when Save & Exit is clicked
 	shutdown chan struct{} // closed just before server.Shutdown in all exit paths
 	exitOnce sync.Once
+
+	client     storage.Backend   // for sync operations
+	syncMu     sync.Mutex       // guards sync state below
+	syncLog    *eventLog        // nil when idle
+	syncDone   chan struct{}     // closed when sync goroutine finishes
+	syncResult *intsync.Result  // set when sync finishes
 }
 
 type systemJSON struct {
@@ -128,18 +183,7 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply selections to groups
-	for _, g := range ws.groups {
-		for i := range g.Files {
-			if sel, ok := req.Selections[g.Files[i].Key]; ok {
-				g.Files[i].Selected = sel
-			}
-		}
-	}
-
-	syncDirs, syncExclude := encodeSelections(ws.groups)
-	ws.cfg.Sync.SyncDirs = syncDirs
-	ws.cfg.Sync.SyncExclude = syncExclude
+	ws.applySelections(req.Selections)
 
 	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -162,6 +206,186 @@ func (ws *webServer) handleWait(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (ws *webServer) applySelections(selections map[string]bool) {
+	for _, g := range ws.groups {
+		for i := range g.Files {
+			if sel, ok := selections[g.Files[i].Key]; ok {
+				g.Files[i].Selected = sel
+			}
+		}
+	}
+	syncDirs, syncExclude := encodeSelections(ws.groups)
+	ws.cfg.Sync.SyncDirs = syncDirs
+	ws.cfg.Sync.SyncExclude = syncExclude
+}
+
+func (ws *webServer) runSync() {
+	log := ws.syncLog
+	defer func() {
+		log.finish()
+		close(ws.syncDone)
+	}()
+
+	workers := ws.cfg.Sync.Workers
+	if workers == 0 {
+		workers = 1
+	}
+	maxRetries := ws.cfg.Sync.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 3
+	}
+
+	opts := intsync.Options{
+		Workers:    workers,
+		MaxRetries: maxRetries,
+		Progress:   progress.NewReporterWriter(log),
+	}
+
+	result, err := intsync.Run(context.Background(), ws.client, ws.cfg, opts)
+
+	ws.syncMu.Lock()
+	if result != nil {
+		ws.syncResult = result
+	} else {
+		ws.syncResult = &intsync.Result{Errors: []error{err}}
+	}
+	ws.syncMu.Unlock()
+}
+
+func (ws *webServer) handleSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ws.syncMu.Lock()
+	if ws.syncLog != nil {
+		// Check if previous sync is still running
+		select {
+		case <-ws.syncDone:
+			// Previous sync finished, allow a new one
+		default:
+			ws.syncMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "sync already running"})
+			return
+		}
+	}
+
+	// Auto-save selections before starting sync
+	var req saveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.syncMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	ws.applySelections(req.Selections)
+	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
+		ws.syncMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	ws.syncLog = newEventLog()
+	ws.syncDone = make(chan struct{})
+	ws.syncResult = nil
+	ws.syncMu.Unlock()
+
+	go ws.runSync()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+
+	if req.Exit {
+		ws.exitOnce.Do(func() { close(ws.done) })
+	}
+}
+
+func (ws *webServer) handleSyncEvents(w http.ResponseWriter, r *http.Request) {
+	ws.syncMu.Lock()
+	log := ws.syncLog
+	ws.syncMu.Unlock()
+
+	if log == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	cursor := 0
+	if id := r.Header.Get("Last-Event-ID"); id != "" {
+		if n, err := strconv.Atoi(id); err == nil {
+			cursor = n + 1
+		}
+	}
+
+	for {
+		lines, done := log.read(cursor)
+		for i, line := range lines {
+			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", cursor+i, line)
+		}
+		cursor += len(lines)
+		if len(lines) > 0 {
+			flusher.Flush()
+		}
+		if done {
+			return
+		}
+		select {
+		case <-log.notify:
+		case <-r.Context().Done():
+			return
+		case <-ws.shutdown:
+			return
+		}
+	}
+}
+
+func (ws *webServer) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	ws.syncMu.Lock()
+	log := ws.syncLog
+	result := ws.syncResult
+	ws.syncMu.Unlock()
+
+	resp := map[string]interface{}{}
+
+	if log == nil {
+		resp["state"] = "idle"
+	} else if result == nil {
+		resp["state"] = "running"
+	} else {
+		if len(result.Errors) > 0 {
+			resp["state"] = "failed"
+		} else {
+			resp["state"] = "complete"
+		}
+		resp["downloaded"] = len(result.Downloaded)
+		resp["deleted"] = len(result.Deleted)
+		resp["skipped"] = result.Skipped
+		resp["errors"] = len(result.Errors)
+		resp["summary"] = result.Summary()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func openBrowser(url string) {
@@ -201,6 +425,16 @@ selections. The config file is updated when you click Save.`,
 
 		client := storage.NewClient(&cfg.Storage)
 
+		if cfg.Sync.BandwidthLimit != "" {
+			bps, err := config.ParseBandwidthLimit(cfg.Sync.BandwidthLimit)
+			if err != nil {
+				return fmt.Errorf("parsing bandwidth_limit: %w", err)
+			}
+			if bps > 0 {
+				client.SetLimiter(ratelimit.NewLimiter(bps))
+			}
+		}
+
 		fmt.Print("Downloading manifest...")
 		remoteData, err := client.DownloadManifest(cmd.Context())
 		if err != nil {
@@ -226,6 +460,7 @@ selections. The config file is updated when you click Save.`,
 			cfgPath:  cfgPath,
 			done:     make(chan struct{}),
 			shutdown: make(chan struct{}),
+			client:   client,
 		}
 
 		mux := http.NewServeMux()
@@ -233,6 +468,9 @@ selections. The config file is updated when you click Save.`,
 		mux.HandleFunc("/api/systems", ws.handleSystems)
 		mux.HandleFunc("/api/save", ws.handleSave)
 		mux.HandleFunc("/api/wait", ws.handleWait)
+		mux.HandleFunc("/api/sync", ws.handleSync)
+		mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
+		mux.HandleFunc("/api/sync/status", ws.handleSyncStatus)
 
 		port := webPort
 		if !cmd.Flags().Changed("port") && cfg.Web.Port > 0 {
@@ -268,6 +506,26 @@ selections. The config file is updated when you click Save.`,
 		// Unblock any /api/wait clients, then gracefully shut down
 		close(ws.shutdown)
 		ws.server.Shutdown(context.Background())
+
+		// Wait for sync to finish if one is running
+		ws.syncMu.Lock()
+		syncDone := ws.syncDone
+		ws.syncMu.Unlock()
+		if syncDone != nil {
+			select {
+			case <-syncDone:
+			default:
+				fmt.Println("\nSync in progress. Waiting for it to finish (Ctrl+C to force quit)...")
+				<-syncDone
+			}
+			ws.syncMu.Lock()
+			result := ws.syncResult
+			ws.syncMu.Unlock()
+			if result != nil {
+				fmt.Print(result.Summary())
+			}
+		}
+
 		return nil
 	},
 }
