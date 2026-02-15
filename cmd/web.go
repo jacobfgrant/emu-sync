@@ -388,6 +388,47 @@ func (ws *webServer) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (ws *webServer) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ws.syncMu.Lock()
+	running := ws.syncLog != nil
+	if running {
+		select {
+		case <-ws.syncDone:
+			running = false
+		default:
+		}
+	}
+	ws.syncMu.Unlock()
+
+	if running {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "sync is running"})
+		return
+	}
+
+	result, err := intsync.Verify(ws.cfg, "", false)
+	resp := map[string]interface{}{}
+	if err != nil {
+		resp["error"] = err.Error()
+	} else {
+		resp["ok"] = len(result.OK)
+		resp["mismatch"] = len(result.Mismatch)
+		resp["missing"] = len(result.Missing)
+		resp["errors"] = len(result.Errors)
+		resp["summary"] = result.Summary()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func openBrowser(url string) {
 	var cmd string
 	var args []string
@@ -471,6 +512,7 @@ selections. The config file is updated when you click Save.`,
 		mux.HandleFunc("/api/sync", ws.handleSync)
 		mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
 		mux.HandleFunc("/api/sync/status", ws.handleSyncStatus)
+		mux.HandleFunc("/api/verify", ws.handleVerify)
 
 		port := webPort
 		if !cmd.Flags().Changed("port") && cfg.Web.Port > 0 {

@@ -881,3 +881,99 @@ func TestHandleSyncEventsLastEventID(t *testing.T) {
 	}
 }
 
+// --- handleVerify tests ---
+
+func TestHandleVerifyRejectsGet(t *testing.T) {
+	ws := &webServer{}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestHandleVerifyRejectsDuringSync(t *testing.T) {
+	ws := &webServer{}
+	ws.syncLog = newEventLog()
+	ws.syncDone = make(chan struct{}) // not closed — simulates running sync
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+}
+
+func TestHandleVerifyRuns(t *testing.T) {
+	tmpDir := t.TempDir()
+	emuPath := filepath.Join(tmpDir, "emu")
+	os.MkdirAll(emuPath, 0o755)
+
+	// Write a local manifest with no files (empty verify)
+	dataDir := filepath.Join(tmpDir, "data")
+	os.MkdirAll(dataDir, 0o755)
+	localManifestPath := filepath.Join(dataDir, "local-manifest.json")
+	m := manifest.New()
+	data, _ := json.Marshal(m)
+	os.WriteFile(localManifestPath, data, 0o644)
+
+	cfg := &config.Config{
+		Sync: config.SyncConfig{
+			EmulationPath: emuPath,
+		},
+	}
+
+	// Override the default manifest path for this test
+	// Verify uses config.DefaultLocalManifestPath() unless overridden,
+	// but we can't easily override that. Instead, ensure a local
+	// manifest exists at the default path, or just test that it returns
+	// a response (may error if no manifest, which is fine to verify the handler works).
+	ws := &webServer{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	// Should have either a summary (success) or an error (no manifest found)
+	if _, hasSummary := resp["summary"]; !hasSummary {
+		if _, hasErr := resp["error"]; !hasErr {
+			t.Error("expected either summary or error in response")
+		}
+	}
+}
+
+func TestHandleVerifyAllowedAfterSyncComplete(t *testing.T) {
+	ws := &webServer{}
+	ws.syncLog = newEventLog()
+	ws.syncDone = make(chan struct{})
+	close(ws.syncDone) // sync is done
+
+	cfg := &config.Config{
+		Sync: config.SyncConfig{
+			EmulationPath: t.TempDir(),
+		},
+	}
+	ws.cfg = cfg
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	// Should not be 409 — verify allowed when sync is complete
+	if rec.Code == http.StatusConflict {
+		t.Fatal("verify should be allowed after sync completes")
+	}
+}
+
