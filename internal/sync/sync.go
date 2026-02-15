@@ -81,6 +81,22 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 	diff := manifest.Diff(filteredRemote, local)
 
+	// Check for files that the local manifest says exist but are
+	// missing from disk (e.g., accidentally deleted by the user).
+	for key := range filteredRemote.Files {
+		if _, inLocal := local.Files[key]; !inLocal {
+			continue // already in diff.Added
+		}
+		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
+		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+			if opts.Verbose {
+				log.Printf("file missing from disk, will re-download: %s", key)
+			}
+			diff.Added = append(diff.Added, key)
+			delete(local.Files, key)
+		}
+	}
+
 	// Clean up any leftover temp files from interrupted syncs
 	if !opts.DryRun {
 		cleanTempFiles(cfg.Sync.EmulationPath, opts.Verbose)

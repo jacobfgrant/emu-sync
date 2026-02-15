@@ -336,6 +336,39 @@ func TestSyncParallelWithErrors(t *testing.T) {
 	}
 }
 
+func TestSyncRedownloadsMissingFiles(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "rom data", size: 8},
+	})
+
+	cfg := testConfig(emuDir)
+
+	// First sync — downloads the file
+	_, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "rom data")
+
+	// Delete the file from disk (simulating accidental deletion)
+	os.Remove(filepath.Join(emuDir, "roms/snes/Game.sfc"))
+
+	// Second sync — should detect missing file and re-download
+	mock.Calls = nil
+	result, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 1 {
+		t.Errorf("downloaded %d, want 1 (missing file)", len(result.Downloaded))
+	}
+	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "rom data")
+}
+
 // --- helpers ---
 
 type mockFile struct {
