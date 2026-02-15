@@ -2,10 +2,13 @@
 set -e
 
 # emu-sync installer
-# Usage: curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash -s -- <token>
 
 REPO="jacobfgrant/emu-sync"
 INSTALL_DIR="$HOME/.local/bin"
+TOKEN="$1"
 
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -47,16 +50,43 @@ fi
 
 echo "Latest release: ${LATEST}"
 
-# Download and extract
+# Download archive and checksums
 FILENAME="emu-sync_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/${REPO}/releases/download/${LATEST}/${FILENAME}"
+BASE_URL="https://github.com/${REPO}/releases/download/${LATEST}"
 
-echo "Downloading ${URL}..."
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-curl -sSL "$URL" -o "${TMPDIR}/${FILENAME}"
+echo "Downloading ${FILENAME}..."
+curl -sSL "${BASE_URL}/${FILENAME}" -o "${TMPDIR}/${FILENAME}"
+curl -sSL "${BASE_URL}/checksums.txt" -o "${TMPDIR}/checksums.txt"
 
+# Verify checksum
+echo "Verifying checksum..."
+EXPECTED=$(grep "${FILENAME}" "${TMPDIR}/checksums.txt" | cut -d' ' -f1)
+if [ -z "$EXPECTED" ]; then
+    echo "Error: checksum not found for ${FILENAME}" >&2
+    exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "${TMPDIR}/${FILENAME}" | cut -d' ' -f1)
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "${TMPDIR}/${FILENAME}" | cut -d' ' -f1)
+else
+    echo "Warning: no sha256sum or shasum found, skipping verification" >&2
+    ACTUAL="$EXPECTED"
+fi
+
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "Error: checksum mismatch" >&2
+    echo "  Expected: ${EXPECTED}" >&2
+    echo "  Got:      ${ACTUAL}" >&2
+    exit 1
+fi
+echo "Checksum OK"
+
+# Extract and install
 mkdir -p "$INSTALL_DIR"
 tar -xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"
 mv "${TMPDIR}/emu-sync" "${INSTALL_DIR}/emu-sync"
@@ -64,16 +94,30 @@ chmod +x "${INSTALL_DIR}/emu-sync"
 
 echo "Installed emu-sync to ${INSTALL_DIR}/emu-sync"
 
-# Check if install dir is in PATH
+# Add to PATH for this session if needed
 case ":$PATH:" in
     *":${INSTALL_DIR}:"*) ;;
     *)
+        export PATH="${INSTALL_DIR}:${PATH}"
+        echo "Added ${INSTALL_DIR} to PATH for this session"
         echo ""
-        echo "NOTE: ${INSTALL_DIR} is not in your PATH."
-        echo "Add this to your shell profile:"
+        echo "To make this permanent, add to your shell profile:"
         echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
         ;;
 esac
 
+# If a token was provided, run setup and install
+if [ -n "$TOKEN" ]; then
+    echo ""
+    echo "Configuring with setup token..."
+    emu-sync setup "$TOKEN"
+
+    if [ "$OS" = "linux" ]; then
+        echo ""
+        echo "Installing systemd timer..."
+        emu-sync install
+    fi
+fi
+
 echo ""
-echo "Run 'emu-sync --help' to get started."
+echo "Done! Run 'emu-sync --help' to get started."
