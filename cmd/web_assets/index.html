@@ -332,12 +332,6 @@ main {
   margin-bottom: 8px;
 }
 
-.progress-counter {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
-}
-
 .progress-errors {
   font-size: 0.825rem;
   color: var(--danger);
@@ -384,6 +378,7 @@ main {
     <div class="footer-separator"></div>
     <button class="btn btn-secondary" id="sync-btn" disabled>Sync</button>
     <button class="btn btn-secondary" id="verify-btn" disabled>Verify</button>
+    <span class="status-msg" id="op-status" style="display:none"></span>
     <span class="status-msg" id="status-msg"></span>
   </div>
 </div>
@@ -645,6 +640,7 @@ main {
 
   function showDisconnected() {
     if (syncEventSource) { syncEventSource.close(); syncEventSource = null; }
+    hideOpStatus();
     var banner = document.createElement("div");
     banner.className = "disconnected-banner";
     banner.textContent = "Server disconnected. You can close this tab.";
@@ -657,49 +653,63 @@ main {
     fetch("/api/wait").then(showDisconnected).catch(showDisconnected);
   }
 
-  function getOrCreateProgress() {
-    var section = document.getElementById("progress-section");
-    if (!section) {
-      section = document.createElement("div");
-      section.id = "progress-section";
-      section.className = "progress-section";
-      document.getElementById("main").appendChild(section);
-    }
-    return section;
+  function showOpStatus(text) {
+    var opStatus = document.getElementById("op-status");
+    document.getElementById("sync-btn").style.display = "none";
+    document.getElementById("verify-btn").style.display = "none";
+    opStatus.textContent = text;
+    opStatus.style.display = "";
   }
 
-  function showProgress(header, body) {
-    var section = getOrCreateProgress();
-    section.innerHTML = "";
+  function hideOpStatus() {
+    document.getElementById("op-status").style.display = "none";
+    document.getElementById("sync-btn").style.display = "";
+    document.getElementById("verify-btn").style.display = "";
+  }
+
+  function showResultCard(header, body, errorLines) {
+    var old = document.getElementById("result-card");
+    if (old) old.remove();
+
+    var section = document.createElement("div");
+    section.id = "result-card";
+    section.className = "progress-section";
+
     var h = document.createElement("div");
     h.className = "progress-header";
     h.textContent = header;
     section.appendChild(h);
+
     if (body) {
       var b = document.createElement("div");
-      b.className = "progress-counter";
+      b.className = "progress-summary";
       b.textContent = body;
       section.appendChild(b);
     }
-    return section;
+
+    if (errorLines && errorLines.length > 0) {
+      var errDiv = document.createElement("div");
+      errDiv.className = "progress-errors";
+      errDiv.textContent = errorLines.join("\n");
+      section.appendChild(errDiv);
+    }
+
+    var main = document.getElementById("main");
+    main.insertBefore(section, main.firstChild);
   }
 
   function doSync() {
     if (syncing || verifying) return;
     syncing = true;
-    var syncBtn = document.getElementById("sync-btn");
-    var verifyBtn = document.getElementById("verify-btn");
     var msg = document.getElementById("status-msg");
-    syncBtn.textContent = "Syncing...";
-    syncBtn.disabled = true;
-    verifyBtn.disabled = true;
+    document.getElementById("sync-btn").disabled = true;
+    document.getElementById("verify-btn").disabled = true;
     msg.textContent = "";
     msg.className = "status-msg";
+    showOpStatus("Syncing...");
 
-    var total = 0, downloaded = 0, errors = 0;
+    var downloaded = 0, errors = 0;
     var errorDetails = [];
-
-    showProgress("Syncing...", "Starting sync...");
 
     fetch("/api/sync", {
       method: "POST",
@@ -710,9 +720,10 @@ main {
     .then(function(data) {
       if (!data.ok) {
         syncing = false;
-        syncBtn.textContent = "Sync";
+        hideOpStatus();
         enableButtons();
-        showProgress("Sync failed", data.error || "Unknown error");
+        msg.textContent = "Sync failed: " + (data.error || "Unknown error");
+        msg.className = "status-msg error";
         return;
       }
 
@@ -721,9 +732,7 @@ main {
         var evt;
         try { evt = JSON.parse(e.data); } catch (_) { return; }
 
-        if (evt.event === "start") {
-          total++;
-        } else if (evt.event === "complete") {
+        if (evt.event === "complete") {
           downloaded++;
         } else if (evt.event === "error") {
           errors++;
@@ -734,25 +743,17 @@ main {
           syncEventSource.close();
           syncEventSource = null;
           syncing = false;
-          syncBtn.textContent = "Sync";
+          hideOpStatus();
           enableButtons();
 
-          var section = showProgress("Sync complete",
-            "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
+          var summary = "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
             ", skipped " + evt.skipped +
-            (evt.errors > 0 ? ", " + evt.errors + " errors" : ""));
-
-          if (errorDetails.length > 0) {
-            var errDiv = document.createElement("div");
-            errDiv.className = "progress-errors";
-            errDiv.textContent = errorDetails.join("\n");
-            section.appendChild(errDiv);
-          }
+            (evt.errors > 0 ? ", " + evt.errors + " errors" : "");
+          showResultCard("Sync complete", summary, errorDetails);
           return;
         }
 
-        showProgress("Syncing...",
-          "Downloaded " + downloaded + " of " + total + " files" +
+        showOpStatus("Syncing... " + downloaded + " files downloaded" +
           (errors > 0 ? " (" + errors + " errors)" : ""));
       };
 
@@ -764,7 +765,7 @@ main {
     })
     .catch(function(err) {
       syncing = false;
-      syncBtn.textContent = "Sync";
+      hideOpStatus();
       enableButtons();
       msg.textContent = "Error: " + err.message;
       msg.className = "status-msg error";
@@ -776,25 +777,24 @@ main {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.state === "running") {
-        showProgress("Syncing...", "Sync in progress...");
+        showOpStatus("Syncing...");
         setTimeout(pollSyncStatus, 1000);
       } else if (data.state === "complete" || data.state === "failed") {
         syncing = false;
-        document.getElementById("sync-btn").textContent = "Sync";
+        hideOpStatus();
         enableButtons();
-        var section = showProgress(
+        showResultCard(
           data.state === "complete" ? "Sync complete" : "Sync failed",
           data.summary || "");
-        section.querySelector(".progress-counter").className = "progress-summary";
       } else {
         syncing = false;
-        document.getElementById("sync-btn").textContent = "Sync";
+        hideOpStatus();
         enableButtons();
       }
     })
     .catch(function() {
       syncing = false;
-      document.getElementById("sync-btn").textContent = "Sync";
+      hideOpStatus();
       enableButtons();
     });
   }
@@ -802,34 +802,30 @@ main {
   function doVerify() {
     if (syncing || verifying) return;
     verifying = true;
-    var verifyBtn = document.getElementById("verify-btn");
-    var syncBtn = document.getElementById("sync-btn");
     var msg = document.getElementById("status-msg");
-    verifyBtn.textContent = "Verifying...";
     disableButtons();
     msg.textContent = "";
     msg.className = "status-msg";
-
-    showProgress("Verifying...", "Checking files against manifest...");
+    showOpStatus("Verifying...");
 
     fetch("/api/verify", { method: "POST" })
     .then(function(res) { return res.json(); })
     .then(function(data) {
       verifying = false;
-      verifyBtn.textContent = "Verify";
+      hideOpStatus();
       enableButtons();
 
       if (data.error) {
-        showProgress("Verify failed", data.error);
+        msg.textContent = "Verify failed: " + data.error;
+        msg.className = "status-msg error";
         return;
       }
 
-      var section = showProgress("Verify complete", data.summary || "");
-      section.querySelector(".progress-counter").className = "progress-summary";
+      showResultCard("Verify complete", data.summary || "");
     })
     .catch(function(err) {
       verifying = false;
-      verifyBtn.textContent = "Verify";
+      hideOpStatus();
       enableButtons();
       msg.textContent = "Error: " + err.message;
       msg.className = "status-msg error";
@@ -842,38 +838,34 @@ main {
     .then(function(data) {
       if (data.state === "running") {
         syncing = true;
-        document.getElementById("sync-btn").textContent = "Syncing...";
         document.getElementById("sync-btn").disabled = true;
         document.getElementById("verify-btn").disabled = true;
+        showOpStatus("Syncing...");
 
         syncEventSource = new EventSource("/api/sync/events");
-        var total = 0, downloaded = 0, errors = 0;
-
-        showProgress("Syncing...", "Sync in progress...");
+        var downloaded = 0, errors = 0;
 
         syncEventSource.onmessage = function(e) {
           var evt;
           try { evt = JSON.parse(e.data); } catch (_) { return; }
 
-          if (evt.event === "start") total++;
-          else if (evt.event === "complete") downloaded++;
+          if (evt.event === "complete") downloaded++;
           else if (evt.event === "error") errors++;
 
           if (evt.event === "done") {
             syncEventSource.close();
             syncEventSource = null;
             syncing = false;
-            document.getElementById("sync-btn").textContent = "Sync";
+            hideOpStatus();
             enableButtons();
-            showProgress("Sync complete",
-              "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
+            var summary = "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
               ", skipped " + evt.skipped +
-              (evt.errors > 0 ? ", " + evt.errors + " errors" : ""));
+              (evt.errors > 0 ? ", " + evt.errors + " errors" : "");
+            showResultCard("Sync complete", summary);
             return;
           }
 
-          showProgress("Syncing...",
-            "Downloaded " + downloaded + " of " + total + " files" +
+          showOpStatus("Syncing... " + downloaded + " files downloaded" +
             (errors > 0 ? " (" + errors + " errors)" : ""));
         };
         syncEventSource.onerror = function() {
@@ -882,10 +874,9 @@ main {
           pollSyncStatus();
         };
       } else if (data.state === "complete" || data.state === "failed") {
-        var section = showProgress(
+        showResultCard(
           data.state === "complete" ? "Sync complete" : "Sync failed",
           data.summary || "");
-        section.querySelector(".progress-counter").className = "progress-summary";
       }
     })
     .catch(function() {});
