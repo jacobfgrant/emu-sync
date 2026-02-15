@@ -356,6 +356,7 @@ main {
 .log-line.downloaded { color: var(--text); }
 .log-line.error { color: var(--danger); }
 .log-line.deleted { color: var(--text-dim); }
+.log-line.retained { color: var(--text-secondary); font-style: italic; }
 .log-line.mismatch { color: var(--danger); }
 .log-line.missing { color: var(--danger); }
 
@@ -755,6 +756,9 @@ main {
     } else if (evt.event === "delete") {
       syncState.deletedFiles.push(evt.file);
       addLogLine("Deleted " + evt.file, "deleted");
+    } else if (evt.event === "retain") {
+      syncState.retainedFiles.push(evt.file);
+      addLogLine("Kept " + evt.file + " (delete disabled)", "retained");
     } else if (evt.event === "skip") {
       syncState.skipped++;
     }
@@ -767,6 +771,7 @@ main {
       var parts = [];
       if (syncState.downloaded > 0) parts.push(syncState.downloaded + " downloaded");
       if (syncState.deletedFiles.length > 0) parts.push(syncState.deletedFiles.length + " deleted");
+      if (syncState.retainedFiles.length > 0) parts.push(syncState.retainedFiles.length + " kept");
       if (syncState.errors > 0) parts.push(syncState.errors + " errors");
       summary.textContent = parts.length > 0 ? parts.join(", ") : "Starting...";
     }
@@ -782,6 +787,7 @@ main {
     var card = getResultCard();
     var dl = evt.downloaded || 0;
     var del = evt.deleted || 0;
+    var ret = evt.retained || 0;
     var skip = evt.skipped || 0;
     var errs = evt.errors || 0;
 
@@ -791,8 +797,13 @@ main {
       if (header) header.textContent = errs > 0 ? "Sync completed with errors" : "Sync complete";
       var summary = document.getElementById("result-summary");
       if (summary) {
-        summary.textContent = "Downloaded " + dl + ", deleted " + del +
-          ", unchanged " + skip + (errs > 0 ? ", " + errs + " errors" : "");
+        var parts = [];
+        parts.push("Downloaded " + dl);
+        parts.push("deleted " + del);
+        if (ret > 0) parts.push(ret + " kept (delete disabled)");
+        parts.push("unchanged " + skip);
+        if (errs > 0) parts.push(errs + " errors");
+        summary.textContent = parts.join(", ");
       }
     }
   }
@@ -809,7 +820,7 @@ main {
     msg.className = "status-msg";
     showOpStatus("Syncing...");
 
-    syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], errorDetails: [] };
+    syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], retainedFiles: [], errorDetails: [] };
     createResultCard("Syncing...");
 
     fetch("/api/sync", {
@@ -962,7 +973,7 @@ main {
         document.getElementById("verify-btn").disabled = true;
         showOpStatus("Syncing...");
 
-        syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], errorDetails: [] };
+        syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], retainedFiles: [], errorDetails: [] };
         createResultCard("Syncing...");
 
         syncEventSource = new EventSource("/api/sync/events");

@@ -33,6 +33,7 @@ type Options struct {
 type Result struct {
 	Downloaded []string
 	Deleted    []string
+	Retained   []string // deselected files kept on disk (delete disabled)
 	Skipped    int
 	Errors     []error
 }
@@ -149,6 +150,10 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 			if opts.Verbose {
 				log.Printf("skipping delete (disabled): %s", key)
 			}
+			result.Retained = append(result.Retained, key)
+			if opts.Progress != nil {
+				opts.Progress.Retain(key)
+			}
 			continue
 		}
 
@@ -171,7 +176,7 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 	result.Skipped = len(filteredRemote.Files) - len(toDownload)
 
 	if opts.Progress != nil {
-		opts.Progress.Done(len(result.Downloaded), len(result.Deleted), len(result.Errors), result.Skipped)
+		opts.Progress.Done(len(result.Downloaded), len(result.Deleted), len(result.Retained), len(result.Errors), result.Skipped)
 	}
 
 	// Save updated local manifest
@@ -318,6 +323,9 @@ func (r *Result) Summary() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Downloaded: %d files\n", len(r.Downloaded))
 	fmt.Fprintf(&b, "Deleted: %d files\n", len(r.Deleted))
+	if len(r.Retained) > 0 {
+		fmt.Fprintf(&b, "Retained: %d files (deselected, delete disabled)\n", len(r.Retained))
+	}
 	fmt.Fprintf(&b, "Unchanged: %d files\n", r.Skipped)
 	if len(r.Errors) > 0 {
 		fmt.Fprintf(&b, "Errors: %d\n", len(r.Errors))

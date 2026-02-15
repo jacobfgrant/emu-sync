@@ -379,6 +379,7 @@ func (ws *webServer) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["downloaded"] = len(result.Downloaded)
 		resp["deleted"] = len(result.Deleted)
+		resp["retained"] = len(result.Retained)
 		resp["skipped"] = result.Skipped
 		resp["errors"] = len(result.Errors)
 		resp["summary"] = result.Summary()

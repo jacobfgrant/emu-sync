@@ -15,6 +15,7 @@ const (
 	EventError    = "error"
 	EventDelete   = "delete"
 	EventSkip     = "skip"
+	EventRetain   = "retain"
 	EventDone     = "done"
 )
 
@@ -26,6 +27,7 @@ type Event struct {
 	Error      string `json:"error,omitempty"`
 	Downloaded int    `json:"downloaded,omitempty"`
 	Deleted    int    `json:"deleted,omitempty"`
+	Retained   int    `json:"retained,omitempty"`
 	Errors     int    `json:"errors,omitempty"`
 	Skipped    int    `json:"skipped,omitempty"`
 }
@@ -87,12 +89,18 @@ func (r *Reporter) Skip(file string) {
 	r.Emit(Event{Type: EventSkip, File: file})
 }
 
+// Retain emits a file retain event (kept on disk despite being deselected).
+func (r *Reporter) Retain(file string) {
+	r.Emit(Event{Type: EventRetain, File: file})
+}
+
 // Done emits a summary event.
-func (r *Reporter) Done(downloaded, deleted, errors, skipped int) {
+func (r *Reporter) Done(downloaded, deleted, retained, errors, skipped int) {
 	r.Emit(Event{
 		Type:       EventDone,
 		Downloaded: downloaded,
 		Deleted:    deleted,
+		Retained:   retained,
 		Errors:     errors,
 		Skipped:    skipped,
 	})

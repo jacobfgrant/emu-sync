@@ -16,7 +16,7 @@ func TestReporterEmitsJSON(t *testing.T) {
 	r.Complete("roms/snes/Game.sfc")
 	r.FileError("roms/bad.rom", fmt.Errorf("connection reset"))
 	r.Delete("roms/old.rom")
-	r.Done(1, 1, 1, 0)
+	r.Done(1, 1, 0, 1, 0)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 5 {
