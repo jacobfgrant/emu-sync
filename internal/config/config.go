@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -33,27 +32,24 @@ type Config struct {
 	Sync    SyncConfig    `toml:"sync"`
 }
 
-// DefaultConfigPath returns the platform-appropriate config file path.
+// DefaultConfigPath returns the config file path, using XDG_CONFIG_HOME
+// if set, otherwise ~/.config.
 func DefaultConfigPath() string {
-	if dir, err := os.UserConfigDir(); err == nil {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "emu-sync", "config.toml")
 	}
-	return filepath.Join(os.Getenv("HOME"), ".config", "emu-sync", "config.toml")
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "emu-sync", "config.toml")
 }
 
-// DefaultLocalManifestPath returns the platform-appropriate local manifest path.
+// DefaultLocalManifestPath returns the local manifest path, using
+// XDG_DATA_HOME if set, otherwise ~/.local/share.
 func DefaultLocalManifestPath() string {
-	switch runtime.GOOS {
-	case "darwin":
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Application Support", "emu-sync", "local-manifest.json")
-	default:
-		if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
-			return filepath.Join(dir, "emu-sync", "local-manifest.json")
-		}
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "share", "emu-sync", "local-manifest.json")
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "emu-sync", "local-manifest.json")
 	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "emu-sync", "local-manifest.json")
 }
 
 // Load reads and parses a TOML config file.
