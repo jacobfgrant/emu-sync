@@ -56,6 +56,27 @@ func TestReporterEmitsJSON(t *testing.T) {
 	}
 }
 
+func TestNewReporterWriter(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewReporterWriter(&buf)
+
+	r.Start("test/file.rom", 512)
+	r.Complete("test/file.rom")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(lines))
+	}
+
+	var e Event
+	if err := json.Unmarshal([]byte(lines[0]), &e); err != nil {
+		t.Fatalf("line 0 not valid JSON: %v", err)
+	}
+	if e.Type != EventStart || e.File != "test/file.rom" || e.Size != 512 {
+		t.Errorf("unexpected start event: %+v", e)
+	}
+}
+
 func TestReporterDisabled(t *testing.T) {
 	var buf bytes.Buffer
 	r := &Reporter{w: &buf, enabled: false}

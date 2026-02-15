@@ -43,6 +43,11 @@ func NewReporter(enabled bool) *Reporter {
 	return &Reporter{w: os.Stdout, enabled: enabled}
 }
 
+// NewReporterWriter creates a reporter that writes JSON lines to w.
+func NewReporterWriter(w io.Writer) *Reporter {
+	return &Reporter{w: w, enabled: true}
+}
+
 // Emit writes a single JSON event line.
 func (r *Reporter) Emit(e Event) {
 	if !r.enabled {
