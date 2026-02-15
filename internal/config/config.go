@@ -121,7 +121,7 @@ func expandPath(p string) string {
 // (for individual file entries).
 func (c *Config) ShouldSync(key string) bool {
 	for _, ex := range c.Sync.SyncExclude {
-		if key == ex {
+		if key == ex || strings.HasPrefix(key, ex+"/") {
 			return false
 		}
 	}
