@@ -153,6 +153,9 @@ func TestSyncNoDeleteFlag(t *testing.T) {
 	if len(result.Deleted) != 0 {
 		t.Errorf("deleted %d, want 0 with NoDelete", len(result.Deleted))
 	}
+	if len(result.Retained) != 1 {
+		t.Errorf("retained %d, want 1 with NoDelete", len(result.Retained))
+	}
 	if len(result.Errors) != 0 {
 		t.Errorf("errors = %d, want 0", len(result.Errors))
 	}

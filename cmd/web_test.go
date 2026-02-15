@@ -909,30 +909,12 @@ func TestHandleVerifyRejectsDuringSync(t *testing.T) {
 	}
 }
 
-func TestHandleVerifyRuns(t *testing.T) {
-	tmpDir := t.TempDir()
-	emuPath := filepath.Join(tmpDir, "emu")
-	os.MkdirAll(emuPath, 0o755)
-
-	// Write a local manifest with no files (empty verify)
-	dataDir := filepath.Join(tmpDir, "data")
-	os.MkdirAll(dataDir, 0o755)
-	localManifestPath := filepath.Join(dataDir, "local-manifest.json")
-	m := manifest.New()
-	data, _ := json.Marshal(m)
-	os.WriteFile(localManifestPath, data, 0o644)
-
+func TestHandleVerifyNoManifest(t *testing.T) {
 	cfg := &config.Config{
 		Sync: config.SyncConfig{
-			EmulationPath: emuPath,
+			EmulationPath: t.TempDir(),
 		},
 	}
-
-	// Override the default manifest path for this test
-	// Verify uses config.DefaultLocalManifestPath() unless overridden,
-	// but we can't easily override that. Instead, ensure a local
-	// manifest exists at the default path, or just test that it returns
-	// a response (may error if no manifest, which is fine to verify the handler works).
 	ws := &webServer{cfg: cfg}
 
 	rec := httptest.NewRecorder()
@@ -946,11 +928,12 @@ func TestHandleVerifyRuns(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 
-	// Should have either a summary (success) or an error (no manifest found)
+	// With no local manifest, verify returns an empty result
+	if resp["ok"].(float64) != 0 {
+		t.Errorf("expected 0 OK, got %v", resp["ok"])
+	}
 	if _, hasSummary := resp["summary"]; !hasSummary {
-		if _, hasErr := resp["error"]; !hasErr {
-			t.Error("expected either summary or error in response")
-		}
+		t.Error("expected summary in response")
 	}
 }
 
