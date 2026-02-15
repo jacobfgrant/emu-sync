@@ -746,19 +746,23 @@ main {
     var summary = document.getElementById("result-summary");
 
     if (evt.event === "complete") {
+      if (syncState.downloaded === 0) addSectionLabel("Downloaded:");
       syncState.downloaded++;
       syncState.downloadedFiles.push(evt.file);
       addLogLine(evt.file, "downloaded");
     } else if (evt.event === "error") {
+      if (syncState.errors === 0) addSectionLabel("Errors:");
       syncState.errors++;
       syncState.errorDetails.push(evt.file + ": " + evt.error);
       addLogLine(evt.file + " \u2014 " + evt.error, "error");
     } else if (evt.event === "delete") {
+      if (syncState.deletedFiles.length === 0) addSectionLabel("Deleted:");
       syncState.deletedFiles.push(evt.file);
-      addLogLine("Deleted " + evt.file, "deleted");
+      addLogLine(evt.file, "deleted");
     } else if (evt.event === "retain") {
+      if (syncState.retainedFiles.length === 0) addSectionLabel("Kept (delete disabled):");
       syncState.retainedFiles.push(evt.file);
-      addLogLine("Kept " + evt.file + " (delete disabled)", "retained");
+      addLogLine(evt.file, "retained");
     } else if (evt.event === "skip") {
       syncState.skipped++;
     }
