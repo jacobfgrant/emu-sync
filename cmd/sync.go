@@ -5,6 +5,7 @@ import (
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/progress"
+	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 	intsync "github.com/jacobfgrant/emu-sync/internal/sync"
 	"github.com/spf13/cobra"
@@ -43,6 +44,17 @@ were removed from the bucket.`,
 		}
 
 		client := storage.NewClient(&cfg.Storage)
+
+		if cfg.Sync.BandwidthLimit != "" {
+			bps, err := config.ParseBandwidthLimit(cfg.Sync.BandwidthLimit)
+			if err != nil {
+				return fmt.Errorf("parsing bandwidth_limit: %w", err)
+			}
+			if bps > 0 {
+				client.SetLimiter(ratelimit.NewLimiter(bps))
+			}
+		}
+
 		opts := intsync.Options{
 			DryRun:     syncDryRun,
 			NoDelete:   syncNoDelete,

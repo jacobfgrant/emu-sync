@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
+	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 	"github.com/jacobfgrant/emu-sync/internal/upload"
 	"github.com/spf13/cobra"
@@ -51,6 +52,17 @@ uploads and you just need to update the manifest.`,
 		}
 
 		client := storage.NewClient(&cfg.Storage)
+
+		if cfg.Sync.BandwidthLimit != "" {
+			bps, err := config.ParseBandwidthLimit(cfg.Sync.BandwidthLimit)
+			if err != nil {
+				return fmt.Errorf("parsing bandwidth_limit: %w", err)
+			}
+			if bps > 0 {
+				client.SetLimiter(ratelimit.NewLimiter(bps))
+			}
+		}
+
 		result, err := upload.Run(cmd.Context(), client, upload.Options{
 			SourcePath:   source,
 			SyncDirs:     cfg.Sync.SyncDirs,

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jacobfgrant/emu-sync/internal/config"
+	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
 )
 
 const ManifestKey = "emu-sync-manifest.json"
@@ -31,9 +32,10 @@ type Backend interface {
 
 // Client wraps an S3 client for bucket operations.
 type Client struct {
-	s3     *s3.Client
-	bucket string
-	prefix string
+	s3      *s3.Client
+	bucket  string
+	prefix  string
+	limiter *ratelimit.Limiter // nil = unlimited
 }
 
 // NewClient creates a storage client from config.
@@ -52,6 +54,19 @@ func NewClient(cfg *config.StorageConfig) *Client {
 		bucket: cfg.Bucket,
 		prefix: strings.TrimSuffix(cfg.Prefix, "/"),
 	}
+}
+
+// SetLimiter configures a shared bandwidth limiter for all transfers.
+func (c *Client) SetLimiter(l *ratelimit.Limiter) {
+	c.limiter = l
+}
+
+// wrapReader applies rate limiting to r if a limiter is configured.
+func (c *Client) wrapReader(r io.Reader) io.Reader {
+	if c.limiter != nil {
+		return ratelimit.NewReader(r, c.limiter)
+	}
+	return r
 }
 
 // prefixedKey prepends the configured prefix to a storage key.
@@ -85,10 +100,13 @@ func (c *Client) UploadFile(ctx context.Context, key, localPath string) error {
 	}
 	defer f.Close()
 
+	var body io.Reader = f
+	body = c.wrapReader(body)
+
 	_, err = c.s3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(c.prefixedKey(key)),
-		Body:   f,
+		Body:   body,
 	})
 	if err != nil {
 		return fmt.Errorf("uploading %s: %w", key, err)
@@ -128,7 +146,8 @@ func (c *Client) DownloadFile(ctx context.Context, key, localPath string) error 
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, result.Body); err != nil {
+	src := c.wrapReader(result.Body)
+	if _, err := io.Copy(f, src); err != nil {
 		return fmt.Errorf("writing %s: %w", localPath, err)
 	}
 

@@ -267,6 +267,38 @@ func TestShouldSyncEmptyExclude(t *testing.T) {
 	}
 }
 
+func TestParseBandwidthLimit(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    int64
+		wantErr bool
+	}{
+		{"", 0, false},
+		{"0", 0, false},
+		{"1024", 1024, false},
+		{"500KB", 500 * 1024, false},
+		{"500kb", 500 * 1024, false},
+		{"10MB", 10 * 1024 * 1024, false},
+		{"10mb", 10 * 1024 * 1024, false},
+		{"1GB", 1024 * 1024 * 1024, false},
+		{"1.5MB", int64(1.5 * 1024 * 1024), false},
+		{" 10MB ", 10 * 1024 * 1024, false},
+		{"abc", 0, true},
+		{"-5MB", 0, true},
+	}
+
+	for _, tt := range tests {
+		got, err := ParseBandwidthLimit(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ParseBandwidthLimit(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseBandwidthLimit(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

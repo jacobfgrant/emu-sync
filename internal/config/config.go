@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -21,12 +22,13 @@ type StorageConfig struct {
 
 // SyncConfig holds local sync settings.
 type SyncConfig struct {
-	EmulationPath string   `toml:"emulation_path"`
-	SyncDirs      []string `toml:"sync_dirs"`
-	SyncExclude   []string `toml:"sync_exclude,omitempty"`
-	Delete        bool     `toml:"delete"`
-	Workers       int      `toml:"workers"`
-	MaxRetries    int      `toml:"max_retries"`
+	EmulationPath  string   `toml:"emulation_path"`
+	SyncDirs       []string `toml:"sync_dirs"`
+	SyncExclude    []string `toml:"sync_exclude,omitempty"`
+	Delete         bool     `toml:"delete"`
+	Workers        int      `toml:"workers"`
+	MaxRetries     int      `toml:"max_retries"`
+	BandwidthLimit string   `toml:"bandwidth_limit,omitempty"`
 }
 
 // Config is the top-level configuration.
@@ -129,6 +131,45 @@ func (c *Config) ShouldSync(key string) bool {
 		}
 	}
 	return false
+}
+
+// ParseBandwidthLimit parses a human-readable bandwidth string (e.g.,
+// "10MB", "500KB", "1024") into bytes per second. Returns 0 for empty
+// string or "0" (unlimited).
+func ParseBandwidthLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+
+	upper := strings.ToUpper(s)
+	var multiplier int64 = 1
+	var numStr string
+
+	switch {
+	case strings.HasSuffix(upper, "GB"):
+		multiplier = 1024 * 1024 * 1024
+		numStr = strings.TrimSuffix(upper, "GB")
+	case strings.HasSuffix(upper, "MB"):
+		multiplier = 1024 * 1024
+		numStr = strings.TrimSuffix(upper, "MB")
+	case strings.HasSuffix(upper, "KB"):
+		multiplier = 1024
+		numStr = strings.TrimSuffix(upper, "KB")
+	default:
+		numStr = upper
+	}
+
+	numStr = strings.TrimSpace(numStr)
+	n, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid bandwidth limit %q: %w", s, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("bandwidth limit cannot be negative: %s", s)
+	}
+
+	return int64(n * float64(multiplier)), nil
 }
 
 // Write serializes a Config to TOML and writes it to the given path.
