@@ -162,6 +162,27 @@ func TestVerifyMixed(t *testing.T) {
 	}
 }
 
+func TestVerifyMissingManifest(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	cfg := testConfig(emuDir)
+	result, err := Verify(cfg, manifestPath, false)
+	if err != nil {
+		t.Fatalf("Verify should not error on missing manifest: %v", err)
+	}
+
+	if len(result.OK) != 0 || len(result.Mismatch) != 0 || len(result.Missing) != 0 {
+		t.Errorf("expected empty result, got OK=%d Mismatch=%d Missing=%d",
+			len(result.OK), len(result.Mismatch), len(result.Missing))
+	}
+
+	want := "No local manifest found. Run sync first.\n"
+	if got := result.Summary(); got != want {
+		t.Errorf("Summary = %q, want %q", got, want)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	os.MkdirAll(filepath.Dir(path), 0o755)

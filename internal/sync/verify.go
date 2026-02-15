@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,9 @@ func Verify(cfg *config.Config, localManifestPath string, verbose bool) (*Verify
 
 	local, err := manifest.LoadJSON(localManifestPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &VerifyResult{}, nil
+		}
 		return nil, fmt.Errorf("loading local manifest: %w", err)
 	}
 
@@ -85,6 +89,10 @@ func Verify(cfg *config.Config, localManifestPath string, verbose bool) (*Verify
 // Summary returns a human-readable summary of the verification.
 func (r *VerifyResult) Summary() string {
 	var b strings.Builder
+	if len(r.OK) == 0 && len(r.Mismatch) == 0 && len(r.Missing) == 0 && len(r.Errors) == 0 {
+		fmt.Fprintln(&b, "No local manifest found. Run sync first.")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "Verified: %d files OK\n", len(r.OK))
 	if len(r.Mismatch) > 0 {
 		fmt.Fprintf(&b, "Mismatched: %d files (will re-download on next sync)\n", len(r.Mismatch))

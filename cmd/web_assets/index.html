@@ -923,6 +923,13 @@ main {
         return;
       }
 
+      var total = (data.ok || 0) + (data.mismatch || 0) + (data.missing || 0) + (data.errors || 0);
+      if (total === 0) {
+        createResultCard("Nothing to verify", "");
+        document.getElementById("result-summary").textContent = "No local manifest found. Run sync first.";
+        return;
+      }
+
       var hasProblems = (data.mismatch || 0) > 0 || (data.missing || 0) > 0 || (data.errors || 0) > 0;
       var cls = hasProblems ? "error" : "success";
       var header = hasProblems ? "Verify found issues" : "All files match";
