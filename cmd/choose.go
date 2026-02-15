@@ -114,7 +114,7 @@ in a system. Saves selections to your config file.`,
 			printTotals(groups)
 			fmt.Println()
 			fmt.Print("Enter a number to browse, or Enter to save: ")
-			input := readLine(reader)
+			input := prompt(reader, "")
 			if input == "" {
 				break
 			}
@@ -264,7 +264,7 @@ func drillInto(reader *bufio.Reader, g *systemGroup) {
 
 		fmt.Println()
 		fmt.Print("Toggle games (e.g., 1 3 5), 'all', 'none', or Enter to go back: ")
-		input := readLine(reader)
+		input := prompt(reader, "")
 		if input == "" {
 			return
 		}
@@ -310,11 +310,6 @@ func formatSize(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
-}
-
-func readLine(reader *bufio.Reader) string {
-	text, _ := reader.ReadString('\n')
-	return strings.TrimSpace(text)
 }
 
 func init() {

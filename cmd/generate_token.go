@@ -88,20 +88,6 @@ their devices with a single 'emu-sync setup <token>' command.`,
 	},
 }
 
-func promptWithDefault(reader *bufio.Reader, label, defaultVal string) string {
-	if defaultVal == "" {
-		fmt.Printf("%s: ", label)
-	} else {
-		fmt.Printf("%s [%s]: ", label, defaultVal)
-	}
-	text, _ := reader.ReadString('\n')
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return defaultVal
-	}
-	return text
-}
-
 func init() {
 	rootCmd.AddCommand(generateTokenCmd)
 }

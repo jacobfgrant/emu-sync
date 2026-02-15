@@ -101,12 +101,6 @@ var initCmd = &cobra.Command{
 	},
 }
 
-func prompt(reader *bufio.Reader, message string) string {
-	fmt.Print(message)
-	text, _ := reader.ReadString('\n')
-	return strings.TrimSpace(text)
-}
-
 func init() {
 	rootCmd.AddCommand(initCmd)
 }
