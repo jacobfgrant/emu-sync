@@ -374,6 +374,39 @@ func TestSyncRedownloadsMissingFiles(t *testing.T) {
 	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "rom data")
 }
 
+func TestSyncModifiedAndMissingNotDuplicated(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	// First sync — download a file
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "v1 data", size: 7},
+	})
+	cfg := testConfig(emuDir)
+
+	_, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Delete file from disk AND update remote with new content
+	// This triggers both diff.Modified (hash changed) and missing-from-disk
+	os.Remove(filepath.Join(emuDir, "roms/snes/Game.sfc"))
+	mock = mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "v2 data updated", size: 15},
+	})
+
+	result, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 1 {
+		t.Errorf("downloaded %d, want 1 (should not duplicate)", len(result.Downloaded))
+	}
+	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "v2 data updated")
+}
+
 // --- helpers ---
 
 type mockFile struct {

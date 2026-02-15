@@ -85,9 +85,21 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 	// Check for files that the local manifest says exist but are
 	// missing from disk (e.g., accidentally deleted by the user).
+	// Build a set of keys already queued for download (Added + Modified)
+	// to avoid duplicates.
+	queued := make(map[string]bool, len(diff.Added)+len(diff.Modified))
+	for _, key := range diff.Added {
+		queued[key] = true
+	}
+	for _, key := range diff.Modified {
+		queued[key] = true
+	}
 	for key := range filteredRemote.Files {
+		if queued[key] {
+			continue // already scheduled for download
+		}
 		if _, inLocal := local.Files[key]; !inLocal {
-			continue // already in diff.Added
+			continue // not in local manifest, already in diff.Added
 		}
 		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
 		if _, err := os.Stat(localPath); os.IsNotExist(err) {
