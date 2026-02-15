@@ -70,9 +70,13 @@ emu-sync install
 | `--workers N` | `sync` | Parallel download workers (default 1) |
 | `--progress-json` | `sync` | Emit JSON progress events to stdout |
 
-## Backblaze B2 key capabilities
+## Storage provider setup
 
-If using B2, create an application key with these capabilities:
+emu-sync works with any S3-compatible storage. Always scope credentials to a single bucket with the minimum permissions needed.
+
+### Backblaze B2
+
+Create an application key scoped to your bucket with these capabilities:
 
 | Capability | Required for |
 |------------|-------------|
@@ -80,13 +84,32 @@ If using B2, create an application key with these capabilities:
 | `readFiles` | `sync`, `status` |
 | `writeFiles` | `upload` |
 | `deleteFiles` | `upload` (deleting removed files from bucket) |
-| `listAllBucketNames` | — (not required, but B2 adds it by default) |
 
 **Sync-only key** (recipients): `listFiles`, `readFiles`
 
 **Full access key** (admin): `listFiles`, `readFiles`, `writeFiles`, `deleteFiles`
 
-Always scope the key to a single bucket.
+The `init` wizard auto-detects the region from B2 endpoint URLs and auto-prefixes `https://` if omitted.
+
+### AWS S3
+
+Create an IAM user or role with a policy scoped to your bucket:
+
+**Sync-only** (recipients):
+```
+s3:ListBucket, s3:GetObject
+```
+
+**Full access** (admin):
+```
+s3:ListBucket, s3:GetObject, s3:PutObject, s3:DeleteObject
+```
+
+Set the endpoint URL to your region's S3 endpoint (e.g., `https://s3.us-east-1.amazonaws.com`), or leave it blank to use the AWS SDK default.
+
+### Other S3-compatible providers
+
+emu-sync uses the standard S3 API (`ListObjectsV2`, `GetObject`, `PutObject`, `DeleteObject`). Any provider that supports these operations will work — configure the endpoint URL, region, and credentials as your provider specifies.
 
 ## Sample config
 
