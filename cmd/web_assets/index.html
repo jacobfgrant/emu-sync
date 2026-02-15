@@ -308,6 +308,15 @@ main {
 
 .status-msg.success { color: var(--success); font-weight: 500; }
 .status-msg.error { color: var(--danger); font-weight: 500; }
+
+.disconnected-banner {
+  background: var(--danger);
+  color: #fff;
+  text-align: center;
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
 </style>
 </head>
 <body>
@@ -577,6 +586,20 @@ main {
     });
   }
 
+  function showDisconnected() {
+    var banner = document.createElement("div");
+    banner.className = "disconnected-banner";
+    banner.textContent = "Server disconnected. You can close this tab.";
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.getElementById("save-btn").disabled = true;
+    document.getElementById("exit-btn").disabled = true;
+    document.getElementById("status-msg").textContent = "";
+  }
+
+  function waitForShutdown() {
+    fetch("/api/wait").then(showDisconnected).catch(showDisconnected);
+  }
+
   document.getElementById("save-btn").addEventListener("click", function() {
     doSave(false);
   });
@@ -589,6 +612,7 @@ main {
     .then(function(data) {
       systems = data.systems || [];
       render();
+      waitForShutdown();
     })
     .catch(function(err) {
       document.getElementById("loading").textContent = "Error loading: " + err.message;

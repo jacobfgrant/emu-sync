@@ -25,7 +25,8 @@ type webServer struct {
 	cfg      *config.Config
 	cfgPath  string
 	server   *http.Server
-	done     chan struct{}
+	done     chan struct{} // closed when Save & Exit is clicked
+	shutdown chan struct{} // closed just before server.Shutdown in all exit paths
 	exitOnce sync.Once
 }
 
@@ -155,6 +156,14 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (ws *webServer) handleWait(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-ws.shutdown:
+	case <-r.Context().Done():
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func openBrowser(url string) {
 	var cmd string
 	var args []string
@@ -210,16 +219,18 @@ selections. The config file is updated when you click Save.`,
 		}
 
 		ws := &webServer{
-			groups:  groups,
-			cfg:     cfg,
-			cfgPath: cfgPath,
-			done:    make(chan struct{}),
+			groups:   groups,
+			cfg:      cfg,
+			cfgPath:  cfgPath,
+			done:     make(chan struct{}),
+			shutdown: make(chan struct{}),
 		}
 
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", ws.handleIndex)
 		mux.HandleFunc("/api/systems", ws.handleSystems)
 		mux.HandleFunc("/api/save", ws.handleSave)
+		mux.HandleFunc("/api/wait", ws.handleWait)
 
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -237,7 +248,7 @@ selections. The config file is updated when you click Save.`,
 		errCh := make(chan error, 1)
 		go func() { errCh <- ws.server.Serve(listener) }()
 
-		// Wait for save, context cancellation, or server error
+		// Wait for Save & Exit, Ctrl+C, or server error
 		select {
 		case <-ws.done:
 			fmt.Printf("\nConfig saved. Shutting down.\n")
@@ -247,6 +258,8 @@ selections. The config file is updated when you click Save.`,
 			return err
 		}
 
+		// Unblock any /api/wait clients, then gracefully shut down
+		close(ws.shutdown)
 		ws.server.Shutdown(context.Background())
 		return nil
 	},

@@ -348,6 +348,34 @@ func TestHandleSaveAndExitConcurrent(t *testing.T) {
 	}
 }
 
+func TestHandleWait(t *testing.T) {
+	ws := &webServer{
+		shutdown: make(chan struct{}),
+	}
+
+	done := make(chan int)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/wait", nil)
+
+	go func() {
+		ws.handleWait(rec, req)
+		done <- rec.Code
+	}()
+
+	// Should be blocked — verify it hasn't returned yet
+	select {
+	case <-done:
+		t.Fatal("handleWait returned before shutdown was signalled")
+	default:
+	}
+
+	close(ws.shutdown)
+	code := <-done
+	if code != 200 {
+		t.Errorf("expected 200, got %d", code)
+	}
+}
+
 func TestEncodeSelectionsAll(t *testing.T) {
 	groups := []*systemGroup{
 		{
