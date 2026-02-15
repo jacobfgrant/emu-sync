@@ -318,31 +318,53 @@ main {
   font-weight: 500;
 }
 
-.progress-section {
+.result-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  margin-top: 16px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  margin-bottom: 20px;
   background: var(--bg-card);
   padding: 16px;
 }
 
-.progress-header {
+.result-card.success { border-left-color: var(--success); }
+.result-card.error { border-left-color: var(--danger); }
+
+.result-header {
   font-weight: 600;
   font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.result-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
-.progress-errors {
-  font-size: 0.825rem;
-  color: var(--danger);
-  margin-top: 8px;
+.result-log {
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  font-family: ui-monospace, "SF Mono", Monaco, "Cascadia Mono", monospace;
+  line-height: 1.6;
 }
 
-.progress-summary {
-  font-size: 0.85rem;
+.result-log:empty { display: none; }
+
+.log-line { color: var(--text-secondary); }
+.log-line.downloaded { color: var(--text); }
+.log-line.error { color: var(--danger); }
+.log-line.deleted { color: var(--text-dim); }
+.log-line.mismatch { color: var(--danger); }
+.log-line.missing { color: var(--danger); }
+
+.result-section-label {
+  font-size: 0.8rem;
+  font-weight: 600;
   color: var(--text-secondary);
-  white-space: pre-line;
-  margin-top: 8px;
+  margin-top: 10px;
+  margin-bottom: 2px;
 }
 
 .footer-separator {
@@ -667,36 +689,115 @@ main {
     document.getElementById("verify-btn").style.display = "";
   }
 
-  function showResultCard(header, body, errorLines) {
-    var old = document.getElementById("result-card");
+  function getResultCard() {
+    return document.getElementById("result-card");
+  }
+
+  function createResultCard(headerText, cardClass) {
+    var old = getResultCard();
     if (old) old.remove();
 
-    var section = document.createElement("div");
-    section.id = "result-card";
-    section.className = "progress-section";
+    var card = document.createElement("div");
+    card.id = "result-card";
+    card.className = "result-card" + (cardClass ? " " + cardClass : "");
 
     var h = document.createElement("div");
-    h.className = "progress-header";
-    h.textContent = header;
-    section.appendChild(h);
+    h.className = "result-header";
+    h.id = "result-header";
+    h.textContent = headerText;
+    card.appendChild(h);
 
-    if (body) {
-      var b = document.createElement("div");
-      b.className = "progress-summary";
-      b.textContent = body;
-      section.appendChild(b);
-    }
+    var s = document.createElement("div");
+    s.className = "result-summary";
+    s.id = "result-summary";
+    card.appendChild(s);
 
-    if (errorLines && errorLines.length > 0) {
-      var errDiv = document.createElement("div");
-      errDiv.className = "progress-errors";
-      errDiv.textContent = errorLines.join("\n");
-      section.appendChild(errDiv);
-    }
+    var log = document.createElement("div");
+    log.className = "result-log";
+    log.id = "result-log";
+    card.appendChild(log);
 
     var main = document.getElementById("main");
-    main.insertBefore(section, main.firstChild);
+    main.insertBefore(card, main.firstChild);
+    return card;
   }
+
+  function addLogLine(text, cls) {
+    var log = document.getElementById("result-log");
+    if (!log) return;
+    var line = document.createElement("div");
+    line.className = "log-line" + (cls ? " " + cls : "");
+    line.textContent = text;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function addSectionLabel(text) {
+    var log = document.getElementById("result-log");
+    if (!log) return;
+    var label = document.createElement("div");
+    label.className = "result-section-label";
+    label.textContent = text;
+    log.appendChild(label);
+  }
+
+  function handleSyncEvent(evt) {
+    var summary = document.getElementById("result-summary");
+
+    if (evt.event === "complete") {
+      syncState.downloaded++;
+      syncState.downloadedFiles.push(evt.file);
+      addLogLine(evt.file, "downloaded");
+    } else if (evt.event === "error") {
+      syncState.errors++;
+      syncState.errorDetails.push(evt.file + ": " + evt.error);
+      addLogLine(evt.file + " \u2014 " + evt.error, "error");
+    } else if (evt.event === "delete") {
+      syncState.deletedFiles.push(evt.file);
+      addLogLine("Deleted " + evt.file, "deleted");
+    } else if (evt.event === "skip") {
+      syncState.skipped++;
+    }
+
+    if (evt.event === "done") {
+      return true;
+    }
+
+    if (summary) {
+      var parts = [];
+      if (syncState.downloaded > 0) parts.push(syncState.downloaded + " downloaded");
+      if (syncState.deletedFiles.length > 0) parts.push(syncState.deletedFiles.length + " deleted");
+      if (syncState.errors > 0) parts.push(syncState.errors + " errors");
+      summary.textContent = parts.length > 0 ? parts.join(", ") : "Starting...";
+    }
+    return false;
+  }
+
+  function finishSync(evt) {
+    syncEventSource = null;
+    syncing = false;
+    hideOpStatus();
+    enableButtons();
+
+    var card = getResultCard();
+    var dl = evt.downloaded || 0;
+    var del = evt.deleted || 0;
+    var skip = evt.skipped || 0;
+    var errs = evt.errors || 0;
+
+    if (card) {
+      card.className = "result-card" + (errs > 0 ? " error" : " success");
+      var header = document.getElementById("result-header");
+      if (header) header.textContent = errs > 0 ? "Sync completed with errors" : "Sync complete";
+      var summary = document.getElementById("result-summary");
+      if (summary) {
+        summary.textContent = "Downloaded " + dl + ", deleted " + del +
+          ", unchanged " + skip + (errs > 0 ? ", " + errs + " errors" : "");
+      }
+    }
+  }
+
+  var syncState = {};
 
   function doSync() {
     if (syncing || verifying) return;
@@ -708,8 +809,8 @@ main {
     msg.className = "status-msg";
     showOpStatus("Syncing...");
 
-    var downloaded = 0, errors = 0;
-    var errorDetails = [];
+    syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], errorDetails: [] };
+    createResultCard("Syncing...");
 
     fetch("/api/sync", {
       method: "POST",
@@ -722,8 +823,12 @@ main {
         syncing = false;
         hideOpStatus();
         enableButtons();
-        msg.textContent = "Sync failed: " + (data.error || "Unknown error");
-        msg.className = "status-msg error";
+        var card = getResultCard();
+        if (card) {
+          card.className = "result-card error";
+          document.getElementById("result-header").textContent = "Sync failed";
+          document.getElementById("result-summary").textContent = data.error || "Unknown error";
+        }
         return;
       }
 
@@ -732,29 +837,10 @@ main {
         var evt;
         try { evt = JSON.parse(e.data); } catch (_) { return; }
 
-        if (evt.event === "complete") {
-          downloaded++;
-        } else if (evt.event === "error") {
-          errors++;
-          errorDetails.push(evt.file + ": " + evt.error);
-        }
-
-        if (evt.event === "done") {
+        if (handleSyncEvent(evt)) {
           syncEventSource.close();
-          syncEventSource = null;
-          syncing = false;
-          hideOpStatus();
-          enableButtons();
-
-          var summary = "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
-            ", skipped " + evt.skipped +
-            (evt.errors > 0 ? ", " + evt.errors + " errors" : "");
-          showResultCard("Sync complete", summary, errorDetails);
-          return;
+          finishSync(evt);
         }
-
-        showOpStatus("Syncing... " + downloaded + " files downloaded" +
-          (errors > 0 ? " (" + errors + " errors)" : ""));
       };
 
       syncEventSource.onerror = function() {
@@ -783,9 +869,14 @@ main {
         syncing = false;
         hideOpStatus();
         enableButtons();
-        showResultCard(
-          data.state === "complete" ? "Sync complete" : "Sync failed",
-          data.summary || "");
+        var cls = data.state === "complete" ? "success" : "error";
+        var card = getResultCard();
+        if (!card) createResultCard("", cls);
+        card = getResultCard();
+        card.className = "result-card " + cls;
+        document.getElementById("result-header").textContent =
+          data.state === "complete" ? "Sync complete" : "Sync failed";
+        document.getElementById("result-summary").textContent = data.summary || "";
       } else {
         syncing = false;
         hideOpStatus();
@@ -816,12 +907,41 @@ main {
       enableButtons();
 
       if (data.error) {
-        msg.textContent = "Verify failed: " + data.error;
-        msg.className = "status-msg error";
+        createResultCard("Verify failed", "error");
+        document.getElementById("result-summary").textContent = data.error;
         return;
       }
 
-      showResultCard("Verify complete", data.summary || "");
+      var hasProblems = (data.mismatch || 0) > 0 || (data.missing || 0) > 0 || (data.errors || 0) > 0;
+      var cls = hasProblems ? "error" : "success";
+      var header = hasProblems ? "Verify found issues" : "All files match";
+      createResultCard(header, cls);
+
+      var parts = [];
+      parts.push((data.ok || 0) + " OK");
+      if ((data.mismatch || 0) > 0) parts.push(data.mismatch + " mismatched");
+      if ((data.missing || 0) > 0) parts.push(data.missing + " missing");
+      if ((data.errors || 0) > 0) parts.push(data.errors + " errors");
+      document.getElementById("result-summary").textContent = parts.join(", ");
+
+      if (data.mismatch_files && data.mismatch_files.length > 0) {
+        addSectionLabel("Mismatched (will re-download on next sync):");
+        for (var i = 0; i < data.mismatch_files.length; i++) {
+          addLogLine(data.mismatch_files[i], "mismatch");
+        }
+      }
+      if (data.missing_files && data.missing_files.length > 0) {
+        addSectionLabel("Missing (will re-download on next sync):");
+        for (var i = 0; i < data.missing_files.length; i++) {
+          addLogLine(data.missing_files[i], "missing");
+        }
+      }
+      if (data.error_details && data.error_details.length > 0) {
+        addSectionLabel("Errors:");
+        for (var i = 0; i < data.error_details.length; i++) {
+          addLogLine(data.error_details[i], "error");
+        }
+      }
     })
     .catch(function(err) {
       verifying = false;
@@ -842,31 +962,18 @@ main {
         document.getElementById("verify-btn").disabled = true;
         showOpStatus("Syncing...");
 
-        syncEventSource = new EventSource("/api/sync/events");
-        var downloaded = 0, errors = 0;
+        syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], errorDetails: [] };
+        createResultCard("Syncing...");
 
+        syncEventSource = new EventSource("/api/sync/events");
         syncEventSource.onmessage = function(e) {
           var evt;
           try { evt = JSON.parse(e.data); } catch (_) { return; }
 
-          if (evt.event === "complete") downloaded++;
-          else if (evt.event === "error") errors++;
-
-          if (evt.event === "done") {
+          if (handleSyncEvent(evt)) {
             syncEventSource.close();
-            syncEventSource = null;
-            syncing = false;
-            hideOpStatus();
-            enableButtons();
-            var summary = "Downloaded " + evt.downloaded + " files, deleted " + evt.deleted +
-              ", skipped " + evt.skipped +
-              (evt.errors > 0 ? ", " + evt.errors + " errors" : "");
-            showResultCard("Sync complete", summary);
-            return;
+            finishSync(evt);
           }
-
-          showOpStatus("Syncing... " + downloaded + " files downloaded" +
-            (errors > 0 ? " (" + errors + " errors)" : ""));
         };
         syncEventSource.onerror = function() {
           syncEventSource.close();
@@ -874,9 +981,10 @@ main {
           pollSyncStatus();
         };
       } else if (data.state === "complete" || data.state === "failed") {
-        showResultCard(
-          data.state === "complete" ? "Sync complete" : "Sync failed",
-          data.summary || "");
+        var cls = data.state === "complete" ? "success" : "error";
+        createResultCard(
+          data.state === "complete" ? "Sync complete" : "Sync failed", cls);
+        document.getElementById("result-summary").textContent = data.summary || "";
       }
     })
     .catch(function() {});

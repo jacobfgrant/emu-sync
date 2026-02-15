@@ -977,3 +977,55 @@ func TestHandleVerifyAllowedAfterSyncComplete(t *testing.T) {
 	}
 }
 
+func TestHandleVerifyReturnsMissingFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	emuPath := filepath.Join(tmpDir, "emu")
+	os.MkdirAll(emuPath, 0o755)
+
+	// Write a local manifest with a file that doesn't exist on disk
+	m := manifest.New()
+	m.Files["roms/snes/Ghost.sfc"] = manifest.FileEntry{
+		MD5:  "abc123",
+		Size: 100,
+	}
+
+	// Save to the default location so Verify finds it
+	localManifestPath := config.DefaultLocalManifestPath()
+	os.MkdirAll(filepath.Dir(localManifestPath), 0o755)
+	mdata, _ := json.Marshal(m)
+	os.WriteFile(localManifestPath, mdata, 0o644)
+	defer os.Remove(localManifestPath)
+
+	cfg := &config.Config{
+		Sync: config.SyncConfig{
+			EmulationPath: emuPath,
+		},
+	}
+	ws := &webServer{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	// Should have 1 missing file
+	missing := resp["missing"].(float64)
+	if missing != 1 {
+		t.Errorf("expected 1 missing, got %v", missing)
+	}
+
+	missingFiles, ok := resp["missing_files"].([]interface{})
+	if !ok || len(missingFiles) != 1 {
+		t.Fatalf("expected 1 missing_files entry, got %v", resp["missing_files"])
+	}
+	if missingFiles[0] != "roms/snes/Ghost.sfc" {
+		t.Errorf("expected Ghost.sfc in missing_files, got %v", missingFiles[0])
+	}
+}
+

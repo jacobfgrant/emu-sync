@@ -423,6 +423,19 @@ func (ws *webServer) handleVerify(w http.ResponseWriter, r *http.Request) {
 		resp["missing"] = len(result.Missing)
 		resp["errors"] = len(result.Errors)
 		resp["summary"] = result.Summary()
+		if len(result.Mismatch) > 0 {
+			resp["mismatch_files"] = result.Mismatch
+		}
+		if len(result.Missing) > 0 {
+			resp["missing_files"] = result.Missing
+		}
+		if len(result.Errors) > 0 {
+			errStrs := make([]string, len(result.Errors))
+			for i, e := range result.Errors {
+				errStrs[i] = e.Error()
+			}
+			resp["error_details"] = errStrs
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
