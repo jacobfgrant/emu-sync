@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	gosync "sync"
+	"syscall"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
@@ -17,6 +18,28 @@ import (
 )
 
 const tmpSuffix = ".emu-sync-tmp"
+
+func acquireLock() (*os.File, error) {
+	lockDir := filepath.Dir(config.DefaultLocalManifestPath())
+	os.MkdirAll(lockDir, 0o755)
+	f, err := os.OpenFile(
+		filepath.Join(lockDir, "sync.lock"),
+		os.O_CREATE|os.O_RDWR, 0o644,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("opening lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another sync is already running")
+	}
+	return f, nil
+}
+
+func releaseLock(f *os.File) {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
+}
 
 // Options controls sync behavior.
 type Options struct {
@@ -47,6 +70,14 @@ type downloadResult struct {
 
 // Run downloads the remote manifest, diffs against local, and syncs files.
 func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts Options) (*Result, error) {
+	if !opts.DryRun {
+		lock, err := acquireLock()
+		if err != nil {
+			return nil, err
+		}
+		defer releaseLock(lock)
+	}
+
 	result := &Result{}
 
 	// Download remote manifest
