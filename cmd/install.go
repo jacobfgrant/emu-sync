@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -38,14 +39,26 @@ shortcut for manual syncing via KDE's application menu.`,
 			return fmt.Errorf("finding home directory: %w", err)
 		}
 
+		// Resolve the actual binary path for the service file
+		binPath, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolving binary path: %w", err)
+		}
+		binPath, err = filepath.EvalSymlinks(binPath)
+		if err != nil {
+			return fmt.Errorf("resolving binary symlinks: %w", err)
+		}
+
 		// Install systemd units
 		systemdDir := filepath.Join(home, ".config", "systemd", "user")
 		if err := os.MkdirAll(systemdDir, 0o755); err != nil {
 			return fmt.Errorf("creating systemd directory: %w", err)
 		}
 
+		resolvedService := strings.Replace(serviceUnit, "BINARY_PATH", binPath, 1)
+
 		servicePath := filepath.Join(systemdDir, "emu-sync.service")
-		if err := os.WriteFile(servicePath, []byte(serviceUnit), 0o644); err != nil {
+		if err := os.WriteFile(servicePath, []byte(resolvedService), 0o644); err != nil {
 			return fmt.Errorf("writing service unit: %w", err)
 		}
 		fmt.Printf("Installed %s\n", servicePath)

@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/emu-sync sync
+ExecStart=BINARY_PATH sync
 Environment=HOME=%h
 
 [Install]
