@@ -18,7 +18,7 @@ func TestUploadNewFiles(t *testing.T) {
 	})
 
 	mock := storage.NewMockBackend()
-	result, err := Run(context.Background(), mock, source, []string{"roms", "bios"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms", "bios"}, false, false, false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -49,14 +49,14 @@ func TestUploadSkipsUnchanged(t *testing.T) {
 	mock := storage.NewMockBackend()
 
 	// First upload
-	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
 
 	// Second upload with same files — should skip
 	mock.Calls = nil
-	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestUploadDetectsModified(t *testing.T) {
 	mock := storage.NewMockBackend()
 
 	// First upload
-	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestUploadDetectsModified(t *testing.T) {
 	os.WriteFile(filepath.Join(source, "roms/snes/Game.sfc"), []byte("modified data"), 0o644)
 
 	// Second upload — should detect change
-	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestUploadDeletesRemoved(t *testing.T) {
 	mock := storage.NewMockBackend()
 
 	// Upload both
-	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	_, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestUploadDeletesRemoved(t *testing.T) {
 	os.Remove(filepath.Join(source, "roms/snes/Game2.sfc"))
 
 	// Re-upload — should delete Game2 from bucket
-	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestUploadDryRun(t *testing.T) {
 	})
 
 	mock := storage.NewMockBackend()
-	result, err := Run(context.Background(), mock, source, []string{"roms"}, true, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms"}, true, false, false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestUploadSkipsMissingDir(t *testing.T) {
 
 	mock := storage.NewMockBackend()
 	// "bios" dir doesn't exist — should be silently skipped
-	result, err := Run(context.Background(), mock, source, []string{"roms", "bios"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms", "bios"}, false, false, false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestUploadHandlesFileError(t *testing.T) {
 	mock := storage.NewMockBackend()
 	mock.UploadErrors["roms/snes/Bad.sfc"] = fmt.Errorf("simulated upload error")
 
-	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false)
+	result, err := Run(context.Background(), mock, source, []string{"roms"}, false, false, false)
 	if err != nil {
 		t.Fatalf("Run should not return fatal error: %v", err)
 	}

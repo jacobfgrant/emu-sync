@@ -22,55 +22,24 @@ type Result struct {
 
 // Run walks the source directory, computes hashes, uploads changed files,
 // and writes a new manifest to the bucket.
-func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDirs []string, dryRun bool, verbose bool) (*Result, error) {
+func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDirs []string, dryRun bool, verbose bool, manifestOnly bool) (*Result, error) {
 	result := &Result{}
 
 	// Build a new manifest from local files
-	newManifest := manifest.New()
-	for _, dir := range syncDirs {
-		dirPath := filepath.Join(sourcePath, dir)
-		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-			if verbose {
-				log.Printf("skipping %s: directory does not exist", dir)
+	newManifest := buildManifest(sourcePath, syncDirs, verbose)
+
+	if manifestOnly {
+		result.Skipped = len(newManifest.Files)
+		if !dryRun {
+			manifestData, err := newManifest.ToJSON()
+			if err != nil {
+				return nil, fmt.Errorf("serializing manifest: %w", err)
 			}
-			continue
+			if err := client.UploadManifest(ctx, manifestData); err != nil {
+				return nil, fmt.Errorf("uploading manifest: %w", err)
+			}
 		}
-
-		err := filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-
-			// Key is relative to sourcePath: "roms/snes/Game.sfc"
-			relPath, err := filepath.Rel(sourcePath, path)
-			if err != nil {
-				return fmt.Errorf("computing relative path for %s: %w", path, err)
-			}
-			// Normalize to forward slashes for bucket keys
-			key := filepath.ToSlash(relPath)
-
-			info, err := d.Info()
-			if err != nil {
-				return fmt.Errorf("stat %s: %w", path, err)
-			}
-
-			hash, err := manifest.HashFile(path)
-			if err != nil {
-				return fmt.Errorf("hashing %s: %w", path, err)
-			}
-
-			newManifest.Files[key] = manifest.FileEntry{
-				Size: info.Size(),
-				MD5:  hash,
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, fmt.Errorf("walking %s: %w", dirPath, err)
-		}
+		return result, nil
 	}
 
 	// Download existing remote manifest for diffing
@@ -138,6 +107,57 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 	}
 
 	return result, nil
+}
+
+// buildManifest walks the source directory and hashes all files.
+func buildManifest(sourcePath string, syncDirs []string, verbose bool) *manifest.Manifest {
+	m := manifest.New()
+	for _, dir := range syncDirs {
+		dirPath := filepath.Join(sourcePath, dir)
+		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+			if verbose {
+				log.Printf("skipping %s: directory does not exist", dir)
+			}
+			continue
+		}
+
+		err := filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+
+			relPath, err := filepath.Rel(sourcePath, path)
+			if err != nil {
+				return fmt.Errorf("computing relative path for %s: %w", path, err)
+			}
+			key := filepath.ToSlash(relPath)
+
+			info, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", path, err)
+			}
+
+			hash, err := manifest.HashFile(path)
+			if err != nil {
+				return fmt.Errorf("hashing %s: %w", path, err)
+			}
+
+			m.Files[key] = manifest.FileEntry{
+				Size: info.Size(),
+				MD5:  hash,
+			}
+			return nil
+		})
+		if err != nil {
+			if verbose {
+				log.Printf("error walking %s: %v", dirPath, err)
+			}
+		}
+	}
+	return m
 }
 
 // Summary returns a human-readable summary of the upload result.
