@@ -20,23 +20,59 @@ type systemGroup struct {
 	Dir       string
 	Files     []fileInfo
 	TotalSize int64
-	Included  bool // whole directory is in sync_dirs
 }
 
 type fileInfo struct {
 	Key      string
 	Name     string
 	Size     int64
-	Excluded bool
+	Selected bool
+}
+
+// groupState returns the selection state of a group: "all", "none", or "partial".
+func (g *systemGroup) groupState() string {
+	selected := 0
+	for _, f := range g.Files {
+		if f.Selected {
+			selected++
+		}
+	}
+	if selected == 0 {
+		return "none"
+	}
+	if selected == len(g.Files) {
+		return "all"
+	}
+	return "partial"
+}
+
+func (g *systemGroup) selectedCount() int {
+	n := 0
+	for _, f := range g.Files {
+		if f.Selected {
+			n++
+		}
+	}
+	return n
+}
+
+func (g *systemGroup) selectedSize() int64 {
+	var size int64
+	for _, f := range g.Files {
+		if f.Selected {
+			size += f.Size
+		}
+	}
+	return size
 }
 
 var chooseCmd = &cobra.Command{
 	Use:   "choose",
 	Short: "Interactively select which systems and games to sync",
 	Long: `Downloads the remote manifest and shows available systems with their
-sizes. Toggle systems on/off, then optionally drill into individual
-systems to include or exclude specific games. Saves selections to
-your config file.`,
+sizes. Select a system by number to see its games and toggle them
+individually. Use 'all' or 'none' to select or deselect everything
+in a system. Saves selections to your config file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := cfgFile
 		if cfgPath == "" {
@@ -71,48 +107,24 @@ your config file.`,
 
 		reader := bufio.NewReader(os.Stdin)
 
-		// System selection loop
+		// Main loop
 		for {
 			printSystems(groups)
 			fmt.Println()
 			printTotals(groups)
 			fmt.Println()
-			fmt.Print("Toggle systems (e.g., 1 3 4), d<N> to drill in, or Enter to save: ")
+			fmt.Print("Enter a number to browse, or Enter to save: ")
 			input := readLine(reader)
 			if input == "" {
 				break
 			}
 
-			for _, tok := range strings.Fields(input) {
-				if strings.HasPrefix(tok, "d") || strings.HasPrefix(tok, "D") {
-					numStr := strings.TrimPrefix(strings.TrimPrefix(tok, "d"), "D")
-					idx, err := strconv.Atoi(numStr)
-					if err != nil || idx < 1 || idx > len(groups) {
-						fmt.Printf("  invalid: %s\n", tok)
-						continue
-					}
-					drillInto(reader, groups[idx-1])
-				} else {
-					idx, err := strconv.Atoi(tok)
-					if err != nil || idx < 1 || idx > len(groups) {
-						fmt.Printf("  invalid: %s\n", tok)
-						continue
-					}
-					g := groups[idx-1]
-					g.Included = !g.Included
-					if g.Included {
-						// Toggled on — include all files
-						for i := range g.Files {
-							g.Files[i].Excluded = false
-						}
-					} else {
-						// Toggled off — exclude all files
-						for i := range g.Files {
-							g.Files[i].Excluded = true
-						}
-					}
-				}
+			idx, err := strconv.Atoi(strings.TrimSpace(input))
+			if err != nil || idx < 1 || idx > len(groups) {
+				fmt.Printf("  invalid: %s\n", input)
+				continue
 			}
+			drillInto(reader, groups[idx-1])
 		}
 
 		// Build sync_dirs and sync_exclude from selections
@@ -120,30 +132,33 @@ your config file.`,
 		var syncExclude []string
 
 		for _, g := range groups {
-			if !g.Included {
-				// Count individually selected files in non-included groups
-				var individual []string
-				for _, f := range g.Files {
-					if !f.Excluded {
-						individual = append(individual, f.Key)
+			state := g.groupState()
+			switch state {
+			case "all":
+				syncDirs = append(syncDirs, g.Dir)
+			case "partial":
+				// Decide whether to include the dir + exclude some,
+				// or include individual files, based on which is shorter
+				excluded := len(g.Files) - g.selectedCount()
+				selected := g.selectedCount()
+				if excluded < selected {
+					// Fewer exclusions — include dir, exclude specific files
+					syncDirs = append(syncDirs, g.Dir)
+					for _, f := range g.Files {
+						if !f.Selected {
+							syncExclude = append(syncExclude, f.Key)
+						}
+					}
+				} else {
+					// Fewer inclusions — add individual files
+					for _, f := range g.Files {
+						if f.Selected {
+							syncDirs = append(syncDirs, f.Key)
+						}
 					}
 				}
-				if len(individual) == len(g.Files) {
-					// All files selected — just include the directory
-					syncDirs = append(syncDirs, g.Dir)
-				} else if len(individual) > 0 {
-					// Only some files selected — add them individually
-					syncDirs = append(syncDirs, individual...)
-				}
-				continue
 			}
-
-			syncDirs = append(syncDirs, g.Dir)
-			for _, f := range g.Files {
-				if f.Excluded {
-					syncExclude = append(syncExclude, f.Key)
-				}
-			}
+			// "none" — nothing to add
 		}
 
 		cfg.Sync.SyncDirs = syncDirs
@@ -163,7 +178,7 @@ your config file.`,
 }
 
 // buildGroups aggregates manifest files into system-level groups and marks
-// which are currently included/excluded based on the existing config.
+// which are currently selected based on the existing config.
 func buildGroups(m *manifest.Manifest, cfg *config.Config) []*systemGroup {
 	dirMap := make(map[string]*systemGroup)
 
@@ -175,9 +190,10 @@ func buildGroups(m *manifest.Manifest, cfg *config.Config) []*systemGroup {
 			dirMap[dir] = g
 		}
 		g.Files = append(g.Files, fileInfo{
-			Key:  key,
-			Name: path.Base(key),
-			Size: entry.Size,
+			Key:      key,
+			Name:     path.Base(key),
+			Size:     entry.Size,
+			Selected: cfg.ShouldSync(key),
 		})
 		g.TotalSize += entry.Size
 	}
@@ -187,49 +203,6 @@ func buildGroups(m *manifest.Manifest, cfg *config.Config) []*systemGroup {
 		sort.Slice(g.Files, func(i, j int) bool {
 			return g.Files[i].Name < g.Files[j].Name
 		})
-	}
-
-	// Determine inclusion state from current config
-	// Build an exclude set for quick lookup
-	excludeSet := make(map[string]bool)
-	for _, ex := range cfg.Sync.SyncExclude {
-		excludeSet[ex] = true
-	}
-
-	// Build set of individual file includes (sync_dirs entries that match a specific file)
-	fileIncludes := make(map[string]bool)
-	dirIncludes := make(map[string]bool)
-	for _, sd := range cfg.Sync.SyncDirs {
-		// Check if this sync_dir matches any file key exactly
-		if _, ok := m.Files[sd]; ok {
-			fileIncludes[sd] = true
-		} else {
-			dirIncludes[sd] = true
-		}
-	}
-
-	for _, g := range dirMap {
-		// Check if this group's directory is included via sync_dirs prefix
-		g.Included = false
-		for dir := range dirIncludes {
-			if g.Dir == dir || strings.HasPrefix(g.Dir, dir+"/") {
-				g.Included = true
-				break
-			}
-		}
-
-		if g.Included {
-			// Mark individually excluded files
-			for i := range g.Files {
-				g.Files[i].Excluded = excludeSet[g.Files[i].Key]
-			}
-		} else {
-			// Group not included — mark files as excluded by default,
-			// except those individually included via sync_dirs
-			for i := range g.Files {
-				g.Files[i].Excluded = !fileIncludes[g.Files[i].Key]
-			}
-		}
 	}
 
 	// Convert to sorted slice
@@ -248,40 +221,18 @@ func printSystems(groups []*systemGroup) {
 	fmt.Println()
 	fmt.Println("Systems:")
 	for i, g := range groups {
+		state := g.groupState()
 		marker := "[ ]"
-		if g.Included {
+		switch state {
+		case "all":
 			marker = "[x]"
-		} else {
-			// Check if any individual files are selected
-			for _, f := range g.Files {
-				if !f.Excluded {
-					marker = "[~]"
-					break
-				}
-			}
-		}
-
-		excluded := 0
-		if g.Included {
-			for _, f := range g.Files {
-				if f.Excluded {
-					excluded++
-				}
-			}
+		case "partial":
+			marker = "[~]"
 		}
 
 		extra := ""
-		if excluded > 0 {
-			extra = fmt.Sprintf("  (%d excluded)", excluded)
-		}
-		if !g.Included && marker == "[~]" {
-			selected := 0
-			for _, f := range g.Files {
-				if !f.Excluded {
-					selected++
-				}
-			}
-			extra = fmt.Sprintf("  (%d of %d selected)", selected, len(g.Files))
+		if state == "partial" {
+			extra = fmt.Sprintf("  (%d of %d selected)", g.selectedCount(), len(g.Files))
 		}
 
 		fmt.Printf("  %2d. %s %-25s %8s  (%d files)%s\n",
@@ -292,12 +243,8 @@ func printSystems(groups []*systemGroup) {
 func printTotals(groups []*systemGroup) {
 	var selectedSize, totalSize int64
 	for _, g := range groups {
-		for _, f := range g.Files {
-			totalSize += f.Size
-			if (g.Included && !f.Excluded) || (!g.Included && !f.Excluded) {
-				selectedSize += f.Size
-			}
-		}
+		totalSize += g.TotalSize
+		selectedSize += g.selectedSize()
 	}
 	fmt.Printf("Selected: %s  |  Total available: %s", formatSize(selectedSize), formatSize(totalSize))
 }
@@ -308,17 +255,9 @@ func drillInto(reader *bufio.Reader, g *systemGroup) {
 	for {
 		fmt.Printf("\n%s (%d files, %s):\n", g.Dir, len(g.Files), formatSize(g.TotalSize))
 		for i, f := range g.Files {
-			marker := "[x]"
-			if f.Excluded {
-				marker = "[ ]"
-			}
-			// For non-included groups, invert the sense: !Excluded means selected
-			if !g.Included {
-				if f.Excluded {
-					marker = "[ ]"
-				} else {
-					marker = "[x]"
-				}
+			marker := "[ ]"
+			if f.Selected {
+				marker = "[x]"
 			}
 			fmt.Printf("  %2d. %s %-45s %8s\n", i+1, marker, f.Name, formatSize(f.Size))
 		}
@@ -333,16 +272,13 @@ func drillInto(reader *bufio.Reader, g *systemGroup) {
 		lower := strings.ToLower(strings.TrimSpace(input))
 		if lower == "all" {
 			for i := range g.Files {
-				g.Files[i].Excluded = false
-			}
-			if !g.Included {
-				g.Included = true
+				g.Files[i].Selected = true
 			}
 			continue
 		}
 		if lower == "none" {
 			for i := range g.Files {
-				g.Files[i].Excluded = true
+				g.Files[i].Selected = false
 			}
 			continue
 		}
@@ -353,7 +289,7 @@ func drillInto(reader *bufio.Reader, g *systemGroup) {
 				fmt.Printf("  invalid: %s\n", tok)
 				continue
 			}
-			g.Files[idx-1].Excluded = !g.Files[idx-1].Excluded
+			g.Files[idx-1].Selected = !g.Files[idx-1].Selected
 		}
 	}
 }
