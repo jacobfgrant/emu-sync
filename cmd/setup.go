@@ -13,14 +13,27 @@ import (
 )
 
 var setupCmd = &cobra.Command{
-	Use:   "setup <token>",
+	Use:   "setup [token]",
 	Short: "Configure emu-sync from a setup token",
 	Long: `Decodes a setup token (from emu-sync generate-token) and writes
-the config file. Prompts for the emulation path if the default
-doesn't exist.`,
-	Args: cobra.ExactArgs(1),
+the config file. If no token is provided as an argument, prompts
+for it interactively (keeping it out of shell history).`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		data, err := token.Decode(args[0])
+		var tokenStr string
+		if len(args) > 0 {
+			tokenStr = args[0]
+		} else {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("Paste setup token: ")
+			text, _ := reader.ReadString('\n')
+			tokenStr = strings.TrimSpace(text)
+			if tokenStr == "" {
+				return fmt.Errorf("no token provided")
+			}
+		}
+
+		data, err := token.Decode(tokenStr)
 		if err != nil {
 			return err
 		}
