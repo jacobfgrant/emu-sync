@@ -180,6 +180,8 @@ func openBrowser(url string) {
 	exec.Command(cmd, args...).Start()
 }
 
+var webPort int
+
 var webCmd = &cobra.Command{
 	Use:   "web",
 	Short: "Open a browser UI to select which games to sync",
@@ -232,7 +234,12 @@ selections. The config file is updated when you click Save.`,
 		mux.HandleFunc("/api/save", ws.handleSave)
 		mux.HandleFunc("/api/wait", ws.handleWait)
 
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		port := webPort
+		if !cmd.Flags().Changed("port") && cfg.Web.Port > 0 {
+			port = cfg.Web.Port
+		}
+
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			return fmt.Errorf("binding to port: %w", err)
 		}
@@ -266,5 +273,6 @@ selections. The config file is updated when you click Save.`,
 }
 
 func init() {
+	webCmd.Flags().IntVar(&webPort, "port", 0, "port to listen on (0 = random)")
 	rootCmd.AddCommand(webCmd)
 }

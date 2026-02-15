@@ -31,10 +31,16 @@ type SyncConfig struct {
 	BandwidthLimit string   `toml:"bandwidth_limit,omitempty"`
 }
 
+// WebConfig holds settings for the web UI.
+type WebConfig struct {
+	Port int `toml:"port,omitempty"`
+}
+
 // Config is the top-level configuration.
 type Config struct {
 	Storage StorageConfig `toml:"storage"`
 	Sync    SyncConfig    `toml:"sync"`
+	Web     WebConfig     `toml:"web,omitempty"`
 }
 
 // DefaultConfigPath returns the config file path, using XDG_CONFIG_HOME
