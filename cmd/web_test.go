@@ -39,7 +39,10 @@ func testGroups() []*systemGroup {
 }
 
 func TestHandleSystems(t *testing.T) {
-	ws := &webServer{groups: testGroups()}
+	ws := &webServer{
+		groups: testGroups(),
+		cfg:    &config.Config{Sync: config.SyncConfig{Delete: true}},
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/systems", nil)
@@ -92,6 +95,11 @@ func TestHandleSystems(t *testing.T) {
 	// Selected: 1MB (snes) + 5MB (gba) = 6MB
 	if resp.SelectedSize != 6*1024*1024 {
 		t.Errorf("expected selected 6MB, got %d", resp.SelectedSize)
+	}
+
+	// Delete field
+	if !resp.Delete {
+		t.Error("expected delete=true in response")
 	}
 
 	// File-level checks
@@ -175,6 +183,67 @@ func TestHandleSave(t *testing.T) {
 		t.Error("expected done channel to remain open after save without exit")
 	default:
 		// good
+	}
+}
+
+func TestHandleSaveDeleteToggle(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Bucket:    "test",
+			KeyID:     "key",
+			SecretKey: "secret",
+		},
+		Sync: config.SyncConfig{
+			EmulationPath: "/tmp/emu",
+			SyncDirs:      []string{"roms"},
+		},
+	}
+
+	ws := &webServer{
+		groups:  testGroups(),
+		cfg:     cfg,
+		cfgPath: cfgPath,
+		done:    make(chan struct{}),
+	}
+
+	// Send delete: true
+	body := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true},"delete":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/save", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ws.handleSave(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !ws.cfg.Sync.Delete {
+		t.Error("expected delete=true in config after save")
+	}
+
+	// Verify it was persisted to TOML
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if !strings.Contains(string(data), "delete = true") {
+		t.Error("expected 'delete = true' in config file")
+	}
+
+	// Send without delete field — should not change the value
+	body2 := `{"selections":{"roms/snes/GameA.sfc":true,"roms/snes/GameB.sfc":true,"roms/gba/GameC.gba":true,"roms/gba/GameD.gba":true}}`
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/save", strings.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	ws.handleSave(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if !ws.cfg.Sync.Delete {
+		t.Error("expected delete to remain true when omitted from request")
 	}
 }
 
@@ -707,6 +776,26 @@ func TestHandleSyncAutoSavesConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "roms/snes") {
 		t.Error("expected roms/snes in config after auto-save")
+	}
+
+	<-ws.syncDone // clean up
+}
+
+func TestHandleSyncDeleteToggle(t *testing.T) {
+	ws, _ := setupSyncWebServer(t)
+
+	body := `{"selections":{"roms/snes/GameA.sfc":true},"delete":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ws.handleSync(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if !ws.cfg.Sync.Delete {
+		t.Error("expected delete=true in config after sync")
 	}
 
 	<-ws.syncDone // clean up

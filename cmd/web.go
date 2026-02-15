@@ -110,11 +110,13 @@ type systemsResponse struct {
 	TotalSizeFormatted    string       `json:"totalSizeFormatted"`
 	SelectedSize          int64        `json:"selectedSize"`
 	SelectedSizeFormatted string       `json:"selectedSizeFormatted"`
+	Delete                bool         `json:"delete"`
 }
 
 type saveRequest struct {
 	Selections map[string]bool `json:"selections"`
 	Exit       bool            `json:"exit"`
+	Delete     *bool           `json:"delete,omitempty"`
 }
 
 type saveResponse struct {
@@ -163,6 +165,7 @@ func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
 		TotalSizeFormatted:    formatSize(totalSize),
 		SelectedSize:          selectedSize,
 		SelectedSizeFormatted: formatSize(selectedSize),
+		Delete:                ws.cfg.Sync.Delete,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -185,6 +188,9 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ws.applySelections(req.Selections)
+	if req.Delete != nil {
+		ws.cfg.Sync.Delete = *req.Delete
+	}
 
 	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -288,6 +294,9 @@ func (ws *webServer) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ws.applySelections(req.Selections)
+	if req.Delete != nil {
+		ws.cfg.Sync.Delete = *req.Delete
+	}
 	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
 		ws.syncMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

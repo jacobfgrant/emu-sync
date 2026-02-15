@@ -374,6 +374,19 @@ main {
   background: var(--border);
   flex-shrink: 0;
 }
+
+.delete-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.delete-toggle.danger { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -398,6 +411,11 @@ main {
   <div class="footer-inner">
     <button class="btn btn-primary" id="save-btn" disabled>Save</button>
     <button class="btn btn-secondary" id="exit-btn" disabled>Save &amp; Exit</button>
+    <div class="footer-separator"></div>
+    <label class="delete-toggle" id="delete-toggle-label">
+      <input type="checkbox" id="delete-toggle">
+      <span>Remove deselected games</span>
+    </label>
     <div class="footer-separator"></div>
     <button class="btn btn-secondary" id="sync-btn" disabled>Sync</button>
     <button class="btn btn-secondary" id="verify-btn" disabled>Verify</button>
@@ -629,7 +647,7 @@ main {
     fetch("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selections: buildSelections(), exit: exit })
+      body: JSON.stringify({ selections: buildSelections(), exit: exit, delete: document.getElementById("delete-toggle").checked })
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
@@ -830,7 +848,7 @@ main {
     fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selections: buildSelections() })
+      body: JSON.stringify({ selections: buildSelections(), delete: document.getElementById("delete-toggle").checked })
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
@@ -1021,10 +1039,25 @@ main {
   document.getElementById("sync-btn").addEventListener("click", doSync);
   document.getElementById("verify-btn").addEventListener("click", doVerify);
 
+  function updateDeleteToggleStyle() {
+    var cb = document.getElementById("delete-toggle");
+    var label = document.getElementById("delete-toggle-label");
+    if (cb.checked) {
+      label.classList.add("danger");
+    } else {
+      label.classList.remove("danger");
+    }
+  }
+
+  document.getElementById("delete-toggle").addEventListener("change", updateDeleteToggleStyle);
+
   fetch("/api/systems")
     .then(function(res) { return res.json(); })
     .then(function(data) {
       systems = data.systems || [];
+      var cb = document.getElementById("delete-toggle");
+      cb.checked = !!data.delete;
+      updateDeleteToggleStyle();
       render();
       checkSyncStatus();
       waitForShutdown();
