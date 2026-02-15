@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=emu-sync
+Comment=Manage which games to sync
+Exec=BINARY_PATH web
+Icon=applications-games
+Terminal=false
+Type=Application
+Categories=Game;Utility;

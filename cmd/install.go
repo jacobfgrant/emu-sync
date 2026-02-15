@@ -24,15 +24,23 @@ var desktopEntry string
 //go:embed install_assets/emu-sync-gui.sh
 var guiScript string
 
+//go:embed install_assets/emu-sync-web.desktop
+var webDesktopEntry string
+
 //go:embed install_assets/com.jacobfgrant.emu-sync.plist
 var launchdPlist string
 
 const launchdLabel = "com.jacobfgrant.emu-sync"
 
+var noShortcuts bool
+
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install automatic sync schedule",
-	Long: `On Linux: installs a systemd user timer and desktop shortcut.
+	Long: `On Linux: installs a systemd user timer and desktop shortcuts.
+The "Sync ROMs" shortcut runs a headless sync; the "emu-sync" shortcut
+opens the web UI for managing game selections. Use --no-shortcuts to
+install only the systemd timer.
 On macOS: installs a launchd user agent.
 Syncs automatically every 6 hours.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -93,32 +101,44 @@ func installLinux(binPath string) error {
 		fmt.Println("Enabled emu-sync.timer (syncs every 6 hours)")
 	}
 
-	// Install desktop shortcut
-	applicationsDir := filepath.Join(home, ".local", "share", "applications")
-	if err := os.MkdirAll(applicationsDir, 0o755); err != nil {
-		return fmt.Errorf("creating applications directory: %w", err)
-	}
+	if !noShortcuts {
+		// Install desktop shortcut for headless sync
+		applicationsDir := filepath.Join(home, ".local", "share", "applications")
+		if err := os.MkdirAll(applicationsDir, 0o755); err != nil {
+			return fmt.Errorf("creating applications directory: %w", err)
+		}
 
-	desktopPath := filepath.Join(applicationsDir, "emu-sync.desktop")
-	if err := os.WriteFile(desktopPath, []byte(desktopEntry), 0o644); err != nil {
-		return fmt.Errorf("writing desktop entry: %w", err)
-	}
-	fmt.Printf("Installed %s\n", desktopPath)
+		desktopPath := filepath.Join(applicationsDir, "emu-sync.desktop")
+		if err := os.WriteFile(desktopPath, []byte(desktopEntry), 0o644); err != nil {
+			return fmt.Errorf("writing desktop entry: %w", err)
+		}
+		fmt.Printf("Installed %s\n", desktopPath)
 
-	// Install GUI script
-	binDir := filepath.Join(home, ".local", "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return fmt.Errorf("creating bin directory: %w", err)
-	}
+		// Install GUI script
+		binDir := filepath.Join(home, ".local", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			return fmt.Errorf("creating bin directory: %w", err)
+		}
 
-	guiPath := filepath.Join(binDir, "emu-sync-gui.sh")
-	if err := os.WriteFile(guiPath, []byte(guiScript), 0o755); err != nil {
-		return fmt.Errorf("writing GUI script: %w", err)
+		guiPath := filepath.Join(binDir, "emu-sync-gui.sh")
+		if err := os.WriteFile(guiPath, []byte(guiScript), 0o755); err != nil {
+			return fmt.Errorf("writing GUI script: %w", err)
+		}
+		fmt.Printf("Installed %s\n", guiPath)
+
+		// Install desktop shortcut for web UI
+		resolvedWeb := strings.Replace(webDesktopEntry, "BINARY_PATH", binPath, 1)
+		webDesktopPath := filepath.Join(applicationsDir, "emu-sync-web.desktop")
+		if err := os.WriteFile(webDesktopPath, []byte(resolvedWeb), 0o644); err != nil {
+			return fmt.Errorf("writing web desktop entry: %w", err)
+		}
+		fmt.Printf("Installed %s\n", webDesktopPath)
 	}
-	fmt.Printf("Installed %s\n", guiPath)
 
 	fmt.Println("\nDone! Sync will run automatically every 6 hours.")
-	fmt.Println("You can also use the 'Sync ROMs' shortcut in your application menu.")
+	if !noShortcuts {
+		fmt.Println("You can also use the 'Sync ROMs' or 'emu-sync' shortcuts in your application menu.")
+	}
 	return nil
 }
 
@@ -160,5 +180,6 @@ func installMacOS(binPath string) error {
 }
 
 func init() {
+	installCmd.Flags().BoolVar(&noShortcuts, "no-shortcuts", false, "skip desktop shortcuts, only install timer/schedule")
 	rootCmd.AddCommand(installCmd)
 }

@@ -14,7 +14,8 @@ var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove automatic sync schedule",
 	Long: `Removes the automatic sync schedule installed by 'emu-sync install'.
-On Linux: stops the systemd timer and removes service files and desktop shortcut.
+On Linux: stops the systemd timer and removes service files, desktop shortcuts,
+and the web UI shortcut.
 On macOS: unloads the launchd agent and removes the plist.
 Does not remove the binary, config, or synced files.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,8 +49,9 @@ func uninstallLinux() error {
 
 	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
 
-	// Remove desktop shortcut and GUI script
+	// Remove desktop shortcuts and GUI script
 	removeFile(filepath.Join(home, ".local", "share", "applications", "emu-sync.desktop"))
+	removeFile(filepath.Join(home, ".local", "share", "applications", "emu-sync-web.desktop"))
 	removeFile(filepath.Join(home, ".local", "bin", "emu-sync-gui.sh"))
 
 	fmt.Println("\nDone! Automatic syncing has been removed.")
