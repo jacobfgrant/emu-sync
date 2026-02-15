@@ -11,8 +11,8 @@ Sync ROMs and BIOS files from an S3-compatible bucket to one or more devices.
 - **Bandwidth limiting** — cap transfer speed to avoid saturating your connection
 - **Automatic retries** — exponential backoff recovers from mid-transfer network hiccups
 - **Setup tokens** — generate a single token that configures a recipient's device in one command
-- **Interactive game selection** — choose which systems and individual games to sync
-- **Automatic scheduling** — systemd timer (Linux/SteamOS) or launchd agent (macOS) that syncs every 6 hours
+- **Interactive game selection** — choose which systems and individual games to sync from the terminal or a browser-based UI
+- **Automatic scheduling** — systemd timer (Linux/SteamOS) or launchd agent (macOS) that syncs every 6 hours, with desktop shortcuts and an app bundle for the web UI
 - **One-liner install** — download, configure, and schedule with a single command
 - **Integrity verification** — re-hash local files to detect corruption or accidental deletion
 
@@ -51,7 +51,8 @@ curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.
 emu-sync setup
 
 # Choose which systems/games to sync (optional — syncs everything by default)
-emu-sync choose
+emu-sync choose    # terminal UI
+emu-sync web       # browser UI
 
 # Sync files
 emu-sync sync --verbose
@@ -68,11 +69,12 @@ emu-sync install
 | `setup [token]` | Configure from a setup token (prompts if no token given) |
 | `upload` | Upload ROMs/BIOS to the bucket |
 | `sync` | Download new/changed files from the bucket |
-| `choose` | Interactively select which systems and games to sync |
+| `choose` | Interactively select which systems and games to sync (terminal) |
+| `web` | Browser UI for selecting games, syncing, and verifying |
 | `status` | Show what would change on next sync |
 | `verify` | Check local files against the manifest |
 | `generate-token` | Interactively create a setup token for recipients |
-| `install` | Install automatic sync schedule (Linux systemd / macOS launchd) |
+| `install` | Install sync schedule, desktop shortcuts, and app bundle |
 | `uninstall` | Remove automatic sync schedule |
 
 ### Common flags
@@ -87,6 +89,7 @@ emu-sync install
 | `--workers N` | `upload`, `sync` | Parallel transfer workers (default 1) |
 | `--manifest-only` | `upload` | Regenerate manifest without uploading files |
 | `--progress-json` | `sync` | Emit JSON progress events to stdout |
+| `--port N` | `web` | Port to listen on (default: random; also configurable via `web.port`) |
 
 ## Storage provider setup
 
@@ -150,6 +153,9 @@ delete = true
 workers = 4
 # max_retries = 3       # per-file retries with exponential backoff (default 3)
 # bandwidth_limit = "10MB"  # throttle transfers (e.g., "500KB", "10MB", "1GB")
+
+# [web]
+# port = 8080  # fixed port for the web UI (default: random)
 ```
 
 Relative paths in `emulation_path` resolve against the user's home directory (e.g., `Emulation` becomes `~/Emulation`). Environment variables like `$HOME` are also expanded. Absolute paths and `~/` paths work as expected.
