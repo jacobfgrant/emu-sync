@@ -487,7 +487,10 @@ var webCmd = &cobra.Command{
 	Short: "Open a browser UI to select which games to sync",
 	Long: `Starts a local web server and opens a browser page where you can
 browse available systems, toggle individual games, save your
-selections, sync files, and verify local integrity.`,
+selections, sync files, and verify local integrity.
+
+By default a random port is chosen. Use --port to specify one, or
+set web.port in the config file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := cfgFile
 		if cfgPath == "" {

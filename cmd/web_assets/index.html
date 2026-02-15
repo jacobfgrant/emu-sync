@@ -1040,6 +1040,7 @@ main {
     doSave(true);
   });
   document.getElementById("quit-btn").addEventListener("click", function() {
+    if (!confirm("Exit without saving?")) return;
     disableButtons();
     var msg = document.getElementById("status-msg");
     msg.textContent = "Closing...";
