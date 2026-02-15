@@ -100,10 +100,15 @@ your config file.`,
 					}
 					g := groups[idx-1]
 					g.Included = !g.Included
-					// Reset per-file excludes when toggling the whole system
 					if g.Included {
+						// Toggled on — include all files
 						for i := range g.Files {
 							g.Files[i].Excluded = false
+						}
+					} else {
+						// Toggled off — exclude all files
+						for i := range g.Files {
+							g.Files[i].Excluded = true
 						}
 					}
 				}
