@@ -3,6 +3,7 @@ package cmd
 import (
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,8 +186,12 @@ func installMacOS(binPath string) error {
 		// Install minimal .app bundle for web UI
 		appDir := filepath.Join(home, "Applications", "emu-sync.app", "Contents")
 		macosDir := filepath.Join(appDir, "MacOS")
+		resourcesDir := filepath.Join(appDir, "Resources")
 		if err := os.MkdirAll(macosDir, 0o755); err != nil {
 			return fmt.Errorf("creating app bundle: %w", err)
+		}
+		if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+			return fmt.Errorf("creating app resources: %w", err)
 		}
 
 		plistDst := filepath.Join(appDir, "Info.plist")
@@ -199,6 +204,19 @@ func installMacOS(binPath string) error {
 		if err := os.WriteFile(launcherPath, []byte(resolvedLauncher), 0o755); err != nil {
 			return fmt.Errorf("writing app launcher: %w", err)
 		}
+
+		// Try to use a system icon (best-effort)
+		iconDst := filepath.Join(resourcesDir, "icon.icns")
+		iconCandidates := []string{
+			"/Applications/Safari.app/Contents/Resources/AppIcon.icns",
+			"/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericNetworkIcon.icns",
+		}
+		for _, src := range iconCandidates {
+			if copyFile(src, iconDst) == nil {
+				break
+			}
+		}
+
 		fmt.Printf("Installed %s\n", filepath.Join(home, "Applications", "emu-sync.app"))
 	}
 
@@ -208,6 +226,23 @@ func installMacOS(binPath string) error {
 		fmt.Println("You can also open the emu-sync app in ~/Applications.")
 	}
 	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func init() {
