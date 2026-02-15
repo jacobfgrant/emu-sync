@@ -116,31 +116,20 @@ your config file.`,
 
 		for _, g := range groups {
 			if !g.Included {
-				// Check for individually included files
-				for _, f := range g.Files {
-					if !f.Excluded {
-						// "Excluded" means excluded from this group's selection.
-						// For a non-included group, non-excluded means the user
-						// selected it individually in drill-in mode.
-						// But wait — for non-included groups, drill-in lets you
-						// pick individual files. We track that via !Excluded.
-					}
-				}
-				// Count individually selected files in excluded groups
+				// Count individually selected files in non-included groups
 				var individual []string
 				for _, f := range g.Files {
 					if !f.Excluded {
 						individual = append(individual, f.Key)
 					}
 				}
-				// If user drilled in and selected specific files, add them individually
-				if len(individual) > 0 && len(individual) < len(g.Files) {
-					syncDirs = append(syncDirs, individual...)
-				} else if len(individual) == len(g.Files) {
+				if len(individual) == len(g.Files) {
 					// All files selected — just include the directory
 					syncDirs = append(syncDirs, g.Dir)
+				} else if len(individual) > 0 {
+					// Only some files selected — add them individually
+					syncDirs = append(syncDirs, individual...)
 				}
-				// If none selected, nothing to add
 				continue
 			}
 
