@@ -7,10 +7,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
+	"github.com/jacobfgrant/emu-sync/internal/retry"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
 )
+
+// Options controls upload behavior.
+type Options struct {
+	SourcePath   string
+	SyncDirs     []string
+	DryRun       bool
+	Verbose      bool
+	ManifestOnly bool
+	Workers      int // number of parallel uploads; 0 or 1 = sequential
+	MaxRetries   int // per-file retries with backoff; 0 = no retries
+}
 
 // Result summarizes what an upload run did.
 type Result struct {
@@ -20,17 +33,23 @@ type Result struct {
 	Errors   []error
 }
 
+// uploadResult is sent back from worker goroutines.
+type uploadResult struct {
+	key string
+	err error
+}
+
 // Run walks the source directory, computes hashes, uploads changed files,
 // and writes a new manifest to the bucket.
-func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDirs []string, dryRun bool, verbose bool, manifestOnly bool) (*Result, error) {
+func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, error) {
 	result := &Result{}
 
 	// Build a new manifest from local files
-	newManifest := buildManifest(sourcePath, syncDirs, verbose)
+	newManifest := buildManifest(opts.SourcePath, opts.SyncDirs, opts.Verbose)
 
-	if manifestOnly {
+	if opts.ManifestOnly {
 		result.Skipped = len(newManifest.Files)
-		if !dryRun {
+		if !opts.DryRun {
 			manifestData, err := newManifest.ToJSON()
 			if err != nil {
 				return nil, fmt.Errorf("serializing manifest: %w", err)
@@ -46,7 +65,7 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 	var oldManifest *manifest.Manifest
 	remoteData, err := client.DownloadManifest(ctx)
 	if err != nil {
-		if verbose {
+		if opts.Verbose {
 			log.Printf("no existing remote manifest, assuming first upload")
 		}
 		oldManifest = manifest.New()
@@ -61,28 +80,24 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 
 	// Upload new and modified files
 	toUpload := append(diff.Added, diff.Modified...)
-	for _, key := range toUpload {
-		localPath := filepath.Join(sourcePath, filepath.FromSlash(key))
-		if dryRun {
+
+	if opts.DryRun {
+		for _, key := range toUpload {
 			fmt.Printf("would upload: %s\n", key)
-		} else {
-			if verbose {
-				log.Printf("uploading: %s", key)
-			}
-			if err := client.UploadFile(ctx, key, localPath); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("upload %s: %w", key, err))
-				continue
-			}
+			result.Uploaded = append(result.Uploaded, key)
 		}
-		result.Uploaded = append(result.Uploaded, key)
+	} else if opts.Workers > 1 && len(toUpload) > 1 {
+		uploadParallel(ctx, client, opts, toUpload, result)
+	} else {
+		uploadSequential(ctx, client, opts, toUpload, result)
 	}
 
 	// Delete remote files that no longer exist locally
 	for _, key := range diff.Deleted {
-		if dryRun {
+		if opts.DryRun {
 			fmt.Printf("would delete from bucket: %s\n", key)
 		} else {
-			if verbose {
+			if opts.Verbose {
 				log.Printf("deleting from bucket: %s", key)
 			}
 			if err := client.DeleteObject(ctx, key); err != nil {
@@ -96,7 +111,7 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 	result.Skipped = len(newManifest.Files) - len(toUpload)
 
 	// Upload the new manifest
-	if !dryRun {
+	if !opts.DryRun {
 		manifestData, err := newManifest.ToJSON()
 		if err != nil {
 			return nil, fmt.Errorf("serializing manifest: %w", err)
@@ -107,6 +122,64 @@ func Run(ctx context.Context, client storage.Backend, sourcePath string, syncDir
 	}
 
 	return result, nil
+}
+
+func uploadSequential(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) {
+	for _, key := range keys {
+		localPath := filepath.Join(opts.SourcePath, filepath.FromSlash(key))
+		if opts.Verbose {
+			log.Printf("uploading: %s", key)
+		}
+		err := retry.WithBackoff(ctx, opts.MaxRetries, func() error {
+			return client.UploadFile(ctx, key, localPath)
+		})
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("upload %s: %w", key, err))
+			continue
+		}
+		result.Uploaded = append(result.Uploaded, key)
+	}
+}
+
+func uploadParallel(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) {
+	jobs := make(chan string, len(keys))
+	results := make(chan uploadResult, len(keys))
+
+	var wg sync.WaitGroup
+	for i := 0; i < opts.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				localPath := filepath.Join(opts.SourcePath, filepath.FromSlash(key))
+				if opts.Verbose {
+					log.Printf("uploading: %s", key)
+				}
+				err := retry.WithBackoff(ctx, opts.MaxRetries, func() error {
+					return client.UploadFile(ctx, key, localPath)
+				})
+				results <- uploadResult{key: key, err: err}
+			}
+		}()
+	}
+
+	for _, key := range keys {
+		jobs <- key
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for ur := range results {
+		if ur.err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("upload %s: %w", ur.key, ur.err))
+			continue
+		}
+		result.Uploaded = append(result.Uploaded, ur.key)
+	}
 }
 
 // buildManifest walks the source directory and hashes all files.

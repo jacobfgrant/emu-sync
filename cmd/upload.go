@@ -12,6 +12,7 @@ import (
 var uploadSource string
 var uploadDryRun bool
 var uploadManifestOnly bool
+var uploadWorkers int
 
 var uploadCmd = &cobra.Command{
 	Use:   "upload",
@@ -39,8 +40,26 @@ uploads and you just need to update the manifest.`,
 			source = cfg.Sync.EmulationPath
 		}
 
+		workers := uploadWorkers
+		if !cmd.Flags().Changed("workers") && cfg.Sync.Workers > 0 {
+			workers = cfg.Sync.Workers
+		}
+
+		maxRetries := cfg.Sync.MaxRetries
+		if maxRetries == 0 {
+			maxRetries = 3
+		}
+
 		client := storage.NewClient(&cfg.Storage)
-		result, err := upload.Run(cmd.Context(), client, source, cfg.Sync.SyncDirs, uploadDryRun, verbose, uploadManifestOnly)
+		result, err := upload.Run(cmd.Context(), client, upload.Options{
+			SourcePath:   source,
+			SyncDirs:     cfg.Sync.SyncDirs,
+			DryRun:       uploadDryRun,
+			Verbose:      verbose,
+			ManifestOnly: uploadManifestOnly,
+			Workers:      workers,
+			MaxRetries:   maxRetries,
+		})
 		if err != nil {
 			return err
 		}
@@ -54,5 +73,6 @@ func init() {
 	uploadCmd.Flags().StringVar(&uploadSource, "source", "", "source directory (defaults to config emulation_path)")
 	uploadCmd.Flags().BoolVar(&uploadDryRun, "dry-run", false, "show what would be uploaded without uploading")
 	uploadCmd.Flags().BoolVar(&uploadManifestOnly, "manifest-only", false, "regenerate and upload manifest without uploading files")
+	uploadCmd.Flags().IntVar(&uploadWorkers, "workers", 1, "number of parallel uploads (1 = sequential)")
 	rootCmd.AddCommand(uploadCmd)
 }
