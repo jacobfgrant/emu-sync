@@ -10,8 +10,9 @@ Sync ROMs and BIOS files from an S3-compatible bucket to one or more devices.
 - **Parallel downloads** — configurable worker count for faster syncs
 - **Setup tokens** — generate a single token that configures a recipient's device in one command
 - **Interactive game selection** — choose which systems and individual games to sync
-- **Systemd integration** — auto-install a timer that syncs every 6 hours (Linux/SteamOS)
-- **Integrity verification** — re-hash local files to detect corruption
+- **Automatic scheduling** — systemd timer (Linux/SteamOS) or launchd agent (macOS) that syncs every 6 hours
+- **One-liner install** — download, configure, and schedule with a single command
+- **Integrity verification** — re-hash local files to detect corruption or accidental deletion
 
 Designed for syncing emulation libraries to Steam Decks, but works anywhere you need one-way S3-to-local sync.
 
@@ -32,12 +33,20 @@ emu-sync generate-token
 
 ### Recipient (Steam Deck or other device)
 
+**One-liner** — install, configure, and schedule automatic syncing:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash -s -- <token>
+```
+
+**Step by step:**
+
 ```sh
 # Install the binary
 curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash
 
 # Configure from the token the admin sent you
-emu-sync setup <token>
+emu-sync setup
 
 # Choose which systems/games to sync (optional — syncs everything by default)
 emu-sync choose
@@ -45,7 +54,7 @@ emu-sync choose
 # Sync files
 emu-sync sync --verbose
 
-# Set up automatic syncing (Linux only — installs systemd timer + desktop shortcut)
+# Set up automatic syncing every 6 hours
 emu-sync install
 ```
 
@@ -54,14 +63,15 @@ emu-sync install
 | Command | Description |
 |---------|-------------|
 | `init` | Interactive configuration wizard |
-| `setup <token>` | Configure from a setup token |
+| `setup [token]` | Configure from a setup token (prompts if no token given) |
 | `upload` | Upload ROMs/BIOS to the bucket |
 | `sync` | Download new/changed files from the bucket |
 | `choose` | Interactively select which systems and games to sync |
 | `status` | Show what would change on next sync |
 | `verify` | Check local files against the manifest |
-| `generate-token` | Create a setup token for recipients |
-| `install` | Install systemd timer and desktop shortcut (Linux) |
+| `generate-token` | Interactively create a setup token for recipients |
+| `install` | Install automatic sync schedule (Linux systemd / macOS launchd) |
+| `uninstall` | Remove automatic sync schedule |
 
 ### Common flags
 
@@ -138,13 +148,15 @@ delete = true
 workers = 4
 ```
 
+Relative paths in `emulation_path` resolve against the user's home directory (e.g., `Emulation` becomes `~/Emulation`). Absolute paths and `~/` paths work as expected.
+
 ## How it works
 
 emu-sync uses a **manifest-based delta sync** approach:
 
 1. **Upload** walks your source directories, hashes every file (MD5), and compares against the remote manifest stored in the bucket. Only new or changed files are uploaded. The updated manifest is written to the bucket.
 
-2. **Sync** downloads the remote manifest and compares it against the local manifest on the device. Files that are new or have a different hash are downloaded. Files present locally but absent from the remote manifest are optionally deleted.
+2. **Sync** downloads the remote manifest and compares it against the local manifest on the device. Files that are new or have a different hash are downloaded. Files present locally but absent from the remote manifest are optionally deleted. Files that exist in the manifest but are missing from disk are automatically re-downloaded.
 
 This means syncs are fast even for large libraries — only actual changes transfer over the network.
 
