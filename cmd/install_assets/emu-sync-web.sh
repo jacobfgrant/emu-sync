@@ -1,3 +1,3 @@
 #!/bin/bash
-BINARY_PATH web &
+"BINARY_PATH" web &
 disown

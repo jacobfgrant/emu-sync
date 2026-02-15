@@ -205,9 +205,9 @@ func installMacOS(binPath string) error {
 			return fmt.Errorf("writing app launcher: %w", err)
 		}
 
-		// Copy system sync icon (best-effort)
+		// Best-effort: copy system sync icon
 		iconDst := filepath.Join(resourcesDir, "icon.icns")
-		copyFile("/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/Sync.icns", iconDst)
+		_ = copyFile("/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/Sync.icns", iconDst)
 
 		fmt.Printf("Installed %s\n", filepath.Join(home, "Applications", "emu-sync.app"))
 	}
@@ -233,8 +233,11 @@ func copyFile(src, dst string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	if _, err = io.Copy(out, in); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return nil
 }
 
 func init() {
