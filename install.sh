@@ -40,6 +40,12 @@ fi
 
 echo "Detected: ${OS}/${ARCH}"
 
+# Track whether this is an upgrade (binary already exists)
+UPGRADE=false
+if [ -f "${INSTALL_DIR}/emu-sync" ]; then
+    UPGRADE=true
+fi
+
 # Get latest release tag
 LATEST=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
 
@@ -106,17 +112,21 @@ case ":$PATH:" in
         ;;
 esac
 
-# If a token was provided, run setup and install
+# If a token was provided, run setup and install schedule/shortcuts
 if [ -n "$TOKEN" ]; then
     echo ""
     echo "Configuring with setup token..."
     emu-sync setup "$TOKEN"
 
-    if [ "$OS" = "linux" ]; then
-        echo ""
-        echo "Installing systemd timer..."
-        emu-sync install
-    fi
+    echo ""
+    echo "Installing schedule and shortcuts..."
+    emu-sync uninstall 2>/dev/null || true
+    emu-sync install
+elif [ "$UPGRADE" = true ]; then
+    echo ""
+    echo "Upgrading schedule and shortcuts..."
+    emu-sync uninstall 2>/dev/null || true
+    emu-sync install
 fi
 
 echo ""
