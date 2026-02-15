@@ -86,10 +86,27 @@ func (c *Config) validate() error {
 	if c.Sync.EmulationPath == "" {
 		return fmt.Errorf("config: sync.emulation_path is required")
 	}
+	c.Sync.EmulationPath = expandPath(c.Sync.EmulationPath)
 	if len(c.Sync.SyncDirs) == 0 {
 		c.Sync.SyncDirs = []string{"roms", "bios"}
 	}
 	return nil
+}
+
+// expandPath resolves ~ to the home directory and converts relative
+// paths to absolute paths.
+func expandPath(p string) string {
+	if strings.HasPrefix(p, "~/") || p == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			p = filepath.Join(home, p[1:])
+		}
+	}
+	abs, err := filepath.Abs(p)
+	if err == nil {
+		p = abs
+	}
+	return p
 }
 
 // ShouldSync returns true if the given key passes the sync_dirs include

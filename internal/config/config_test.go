@@ -138,6 +138,48 @@ func TestWriteAndLoad(t *testing.T) {
 	}
 }
 
+func TestExpandTildePath(t *testing.T) {
+	toml := `
+[storage]
+bucket = "b"
+key_id = "abc"
+secret_key = "xyz"
+[sync]
+emulation_path = "~/Emulation"
+`
+	path := writeTempConfig(t, toml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, "Emulation")
+	if cfg.Sync.EmulationPath != want {
+		t.Errorf("emulation_path = %q, want %q", cfg.Sync.EmulationPath, want)
+	}
+}
+
+func TestExpandRelativePath(t *testing.T) {
+	toml := `
+[storage]
+bucket = "b"
+key_id = "abc"
+secret_key = "xyz"
+[sync]
+emulation_path = "Emulation"
+`
+	path := writeTempConfig(t, toml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !filepath.IsAbs(cfg.Sync.EmulationPath) {
+		t.Errorf("emulation_path should be absolute, got %q", cfg.Sync.EmulationPath)
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
