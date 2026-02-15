@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jacobfgrant/emu-sync/internal/config"
@@ -408,6 +409,59 @@ func TestSyncModifiedAndMissingNotDuplicated(t *testing.T) {
 		t.Errorf("downloaded %d, want 1 (should not duplicate)", len(result.Downloaded))
 	}
 	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "v2 data updated")
+}
+
+func TestSyncLockPreventsOverlap(t *testing.T) {
+	// Acquire the lock directly to simulate another sync in progress
+	lock, err := acquireLock()
+	if err != nil {
+		t.Fatalf("acquireLock: %v", err)
+	}
+	defer releaseLock(lock)
+
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "data", size: 4},
+	})
+
+	cfg := testConfig(emuDir)
+	_, err = Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err == nil {
+		t.Fatal("expected error when lock is held, got nil")
+	}
+	if !strings.Contains(err.Error(), "another sync is already running") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSyncLockSkippedForDryRun(t *testing.T) {
+	// Hold the lock — dry-run should still succeed
+	lock, err := acquireLock()
+	if err != nil {
+		t.Fatalf("acquireLock: %v", err)
+	}
+	defer releaseLock(lock)
+
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "data", size: 4},
+	})
+
+	cfg := testConfig(emuDir)
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		DryRun:            true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run should succeed even with lock held: %v", err)
+	}
+	if len(result.Downloaded) != 1 {
+		t.Errorf("downloaded %d, want 1", len(result.Downloaded))
+	}
 }
 
 // --- helpers ---
