@@ -535,16 +535,16 @@ main {
   // buildClientSubGroups groups files by their immediate subdirectory.
   // Returns an array of {relDir, fileIndices} sorted with "" first.
   function buildClientSubGroups(sys) {
-    var map = {};
+    var dirMap = {};
     for (var i = 0; i < sys.files.length; i++) {
       var sd = getSubDir(sys.dir, sys.files[i].key);
-      if (!map[sd]) map[sd] = [];
-      map[sd].push(i);
+      if (!dirMap[sd]) dirMap[sd] = [];
+      dirMap[sd].push(i);
     }
     var groups = [];
-    var keys = Object.keys(map).sort();
+    var keys = Object.keys(dirMap).sort();
     for (var k = 0; k < keys.length; k++) {
-      groups.push({ relDir: keys[k], fileIndices: map[keys[k]] });
+      groups.push({ relDir: keys[k], fileIndices: dirMap[keys[k]] });
     }
     // Move "" to front
     for (var g = 0; g < groups.length; g++) {
