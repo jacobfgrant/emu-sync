@@ -73,10 +73,11 @@ type webServer struct {
 	groups            []*systemGroup
 	cfg               *config.Config
 	cfgPath           string
-	localManifestPath string       // overrides default; used by tests
+	localManifestPath string               // overrides default; used by tests
+	remoteManifest    *manifest.Manifest   // for sync status diff
 	server            *http.Server
-	done              chan struct{} // closed when Save & Exit is clicked
-	shutdown          chan struct{} // closed just before server.Shutdown in all exit paths
+	done              chan struct{}         // closed when Save & Exit is clicked
+	shutdown          chan struct{}         // closed just before server.Shutdown in all exit paths
 	exitOnce          sync.Once
 
 	client     storage.Backend   // for sync operations
@@ -104,13 +105,21 @@ type fileJSON struct {
 	Selected      bool   `json:"selected"`
 }
 
+type syncStatusJSON struct {
+	New       int `json:"new"`
+	Updated   int `json:"updated"`
+	Removed   int `json:"removed"`
+	Unchanged int `json:"unchanged"`
+}
+
 type systemsResponse struct {
-	Systems               []systemJSON `json:"systems"`
-	TotalSize             int64        `json:"totalSize"`
-	TotalSizeFormatted    string       `json:"totalSizeFormatted"`
-	SelectedSize          int64        `json:"selectedSize"`
-	SelectedSizeFormatted string       `json:"selectedSizeFormatted"`
-	Delete                bool         `json:"delete"`
+	Systems               []systemJSON    `json:"systems"`
+	TotalSize             int64           `json:"totalSize"`
+	TotalSizeFormatted    string          `json:"totalSizeFormatted"`
+	SelectedSize          int64           `json:"selectedSize"`
+	SelectedSizeFormatted string          `json:"selectedSizeFormatted"`
+	Delete                bool            `json:"delete"`
+	SyncStatus            *syncStatusJSON `json:"syncStatus,omitempty"`
 }
 
 type saveRequest struct {
@@ -168,8 +177,69 @@ func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
 		Delete:                ws.cfg.Sync.Delete,
 	}
 
+	// Compute sync status if we have a remote manifest
+	if ws.remoteManifest != nil {
+		resp.SyncStatus = ws.computeSyncStatus()
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// computeSyncStatus diffs the remote manifest against the local manifest
+// and returns counts filtered to only files the config would sync.
+func (ws *webServer) computeSyncStatus() *syncStatusJSON {
+	localPath := ws.localManifestPath
+	if localPath == "" {
+		localPath = config.DefaultLocalManifestPath()
+	}
+	local, err := manifest.LoadJSON(localPath)
+	if err != nil {
+		// No local manifest = first sync, everything is new
+		newCount := 0
+		for key := range ws.remoteManifest.Files {
+			if ws.cfg.ShouldSync(key) {
+				newCount++
+			}
+		}
+		return &syncStatusJSON{New: newCount}
+	}
+
+	diff := manifest.Diff(ws.remoteManifest, local)
+
+	var status syncStatusJSON
+	for _, key := range diff.Added {
+		if ws.cfg.ShouldSync(key) {
+			status.New++
+		}
+	}
+	for _, key := range diff.Modified {
+		if ws.cfg.ShouldSync(key) {
+			status.Updated++
+		}
+	}
+	for _, key := range diff.Deleted {
+		if ws.cfg.ShouldSync(key) {
+			status.Removed++
+		}
+	}
+
+	// Count unchanged selected files
+	for key := range ws.remoteManifest.Files {
+		if !ws.cfg.ShouldSync(key) {
+			continue
+		}
+		localEntry, exists := local.Files[key]
+		if !exists {
+			continue
+		}
+		remoteEntry := ws.remoteManifest.Files[key]
+		if localEntry.MD5 == remoteEntry.MD5 && localEntry.Size == remoteEntry.Size {
+			status.Unchanged++
+		}
+	}
+
+	return &status
 }
 
 func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
@@ -534,12 +604,13 @@ set web.port in the config file.`,
 		}
 
 		ws := &webServer{
-			groups:   groups,
-			cfg:      cfg,
-			cfgPath:  cfgPath,
-			done:     make(chan struct{}),
-			shutdown: make(chan struct{}),
-			client:   client,
+			groups:         groups,
+			cfg:            cfg,
+			cfgPath:        cfgPath,
+			remoteManifest: remote,
+			done:           make(chan struct{}),
+			shutdown:       make(chan struct{}),
+			client:         client,
 		}
 
 		mux := http.NewServeMux()

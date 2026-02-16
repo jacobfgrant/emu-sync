@@ -465,6 +465,19 @@ main {
 .search-bar input::placeholder {
   color: var(--text-dim);
 }
+
+.sync-status {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.sync-status .highlight { font-weight: 600; color: var(--text); }
+.sync-status.up-to-date { color: var(--success); }
 </style>
 </head>
 <body>
@@ -1342,6 +1355,31 @@ main {
 
   document.getElementById("delete-toggle").addEventListener("change", updateDeleteToggleStyle);
 
+  function renderSyncStatus(status) {
+    if (!status) return;
+    var el = document.getElementById("sync-status");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "sync-status";
+      var searchBar = document.querySelector(".search-bar");
+      if (searchBar) searchBar.parentNode.insertBefore(el, searchBar.nextSibling);
+    }
+
+    var pending = status.new + status.updated + status.removed;
+    if (pending === 0) {
+      el.className = "sync-status up-to-date";
+      el.textContent = "Everything up to date";
+      return;
+    }
+
+    el.className = "sync-status";
+    var parts = [];
+    if (status.new > 0) parts.push("<span class=\"highlight\">" + status.new + " new</span>");
+    if (status.updated > 0) parts.push("<span class=\"highlight\">" + status.updated + " updated</span>");
+    if (status.removed > 0) parts.push("<span class=\"highlight\">" + status.removed + " removed</span>");
+    el.innerHTML = parts.join(", ") + " since last sync";
+  }
+
   fetch("/api/systems")
     .then(function(res) { return res.json(); })
     .then(function(data) {
@@ -1350,6 +1388,7 @@ main {
       cb.checked = !!data.delete;
       updateDeleteToggleStyle();
       render();
+      renderSyncStatus(data.syncStatus);
       checkSyncStatus();
       waitForShutdown();
     })
