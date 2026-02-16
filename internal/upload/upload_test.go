@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
@@ -21,6 +22,7 @@ func TestUploadNewFiles(t *testing.T) {
 	result, err := Run(context.Background(), mock, Options{
 		SourcePath: source,
 		SyncDirs:   []string{"roms", "bios"},
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -50,7 +52,7 @@ func TestUploadSkipsUnchanged(t *testing.T) {
 	})
 
 	mock := storage.NewMockBackend()
-	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}}
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
 
 	// First upload
 	_, err := Run(context.Background(), mock, opts)
@@ -79,7 +81,7 @@ func TestUploadDetectsModified(t *testing.T) {
 	})
 
 	mock := storage.NewMockBackend()
-	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}}
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
 
 	// First upload
 	_, err := Run(context.Background(), mock, opts)
@@ -111,7 +113,7 @@ func TestUploadDeletesRemoved(t *testing.T) {
 	})
 
 	mock := storage.NewMockBackend()
-	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}}
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
 
 	// Upload both
 	_, err := Run(context.Background(), mock, opts)
@@ -146,6 +148,7 @@ func TestUploadDryRun(t *testing.T) {
 		SourcePath: source,
 		SyncDirs:   []string{"roms"},
 		DryRun:     true,
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -173,6 +176,7 @@ func TestUploadSkipsMissingDir(t *testing.T) {
 	result, err := Run(context.Background(), mock, Options{
 		SourcePath: source,
 		SyncDirs:   []string{"roms", "bios"},
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -195,6 +199,7 @@ func TestUploadHandlesFileError(t *testing.T) {
 	result, err := Run(context.Background(), mock, Options{
 		SourcePath: source,
 		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run should not return fatal error: %v", err)
@@ -223,6 +228,7 @@ func TestUploadParallel(t *testing.T) {
 		SourcePath: source,
 		SyncDirs:   []string{"roms", "bios"},
 		Workers:    3,
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -260,6 +266,7 @@ func TestUploadParallelWithErrors(t *testing.T) {
 		SourcePath: source,
 		SyncDirs:   []string{"roms"},
 		Workers:    2,
+		CachePath:  tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run should not return fatal error: %v", err)
@@ -287,6 +294,7 @@ func TestUploadSkipsDotfiles(t *testing.T) {
 		SourcePath:   source,
 		SyncDirs:     []string{"roms", "bios"},
 		SkipDotfiles: true,
+		CachePath:    tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -327,6 +335,7 @@ func TestUploadSkipsDotfileDirectories(t *testing.T) {
 		SourcePath:   source,
 		SyncDirs:     []string{"roms"},
 		SkipDotfiles: true,
+		CachePath:    tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -348,6 +357,7 @@ func TestUploadIncludesDotfilesWhenDisabled(t *testing.T) {
 		SourcePath:   source,
 		SyncDirs:     []string{"roms"},
 		SkipDotfiles: false,
+		CachePath:    tempCachePath(t),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -355,6 +365,90 @@ func TestUploadIncludesDotfilesWhenDisabled(t *testing.T) {
 
 	if len(result.Uploaded) != 2 {
 		t.Errorf("uploaded %d files, want 2 (dotfile included)", len(result.Uploaded))
+	}
+}
+
+// --- cache integration tests ---
+
+func TestUploadCacheHitsOnSecondRun(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game1.sfc": "game1 data",
+		"roms/snes/Game2.sfc": "game2 data",
+	})
+
+	mock := storage.NewMockBackend()
+	cachePath := tempCachePath(t)
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: cachePath}
+
+	// First run — no cache hits
+	result1, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if result1.CacheHits != 0 {
+		t.Errorf("first run cache hits = %d, want 0", result1.CacheHits)
+	}
+
+	// Second run — everything cached
+	result2, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result2.CacheHits != 2 {
+		t.Errorf("second run cache hits = %d, want 2", result2.CacheHits)
+	}
+}
+
+func TestUploadCacheRehashesOnMtimeChange(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "original data",
+	})
+
+	mock := storage.NewMockBackend()
+	cachePath := tempCachePath(t)
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: cachePath}
+
+	// First run — populates cache
+	_, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Touch file to change mtime (keep same content to prove cache miss is mtime-based)
+	path := filepath.Join(source, "roms/snes/Game.sfc")
+	now := time.Now().Add(time.Second)
+	os.Chtimes(path, now, now)
+
+	// Second run — should re-hash due to mtime change
+	result, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result.CacheHits != 0 {
+		t.Errorf("cache hits = %d, want 0 (file was touched)", result.CacheHits)
+	}
+}
+
+func TestUploadDryRunDoesNotSaveCache(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "data",
+	})
+
+	cachePath := tempCachePath(t)
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		DryRun:     true,
+		CachePath:  cachePath,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Cache file should not exist after dry run
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Error("cache file should not exist after dry run")
 	}
 }
 
@@ -374,6 +468,12 @@ func setupSourceDir(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+// tempCachePath returns a path for an isolated upload cache in a temp dir.
+func tempCachePath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "upload-cache.json")
 }
 
 // verifyManifest parses the manifest from the mock and returns it.
