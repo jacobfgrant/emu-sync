@@ -1139,3 +1139,240 @@ func TestHandleVerifyReturnsMissingFiles(t *testing.T) {
 	}
 }
 
+// --- systemKey / buildGroups / sub-group tests ---
+
+func TestSystemKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"roms/snes/Game.sfc", "roms/snes"},
+		{"bios/pcsx2/resources/shader.glsl", "bios/pcsx2"},
+		{"bios/file.bin", "bios"},
+		{"roms/gba/sub/deep/file.gba", "roms/gba"},
+	}
+	for _, tt := range tests {
+		got := systemKey(tt.key)
+		if got != tt.want {
+			t.Errorf("systemKey(%q) = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestBuildGroupsSystemKey(t *testing.T) {
+	m := manifest.New()
+	m.Files["bios/pcsx2/file.bin"] = manifest.FileEntry{Size: 100}
+	m.Files["bios/pcsx2/resources/shader.glsl"] = manifest.FileEntry{Size: 200}
+	m.Files["bios/pcsx2/resources/deep/other.bin"] = manifest.FileEntry{Size: 300}
+	m.Files["roms/snes/Game.sfc"] = manifest.FileEntry{Size: 400}
+
+	cfg := &config.Config{
+		Sync: config.SyncConfig{SyncDirs: []string{"bios", "roms"}},
+	}
+
+	groups := buildGroups(m, cfg)
+
+	// Should produce 2 groups: bios/pcsx2 and roms/snes
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+
+	// bios/pcsx2 should have 3 files
+	var pcsx2 *systemGroup
+	for _, g := range groups {
+		if g.Dir == "bios/pcsx2" {
+			pcsx2 = g
+		}
+	}
+	if pcsx2 == nil {
+		t.Fatal("expected bios/pcsx2 group")
+	}
+	if len(pcsx2.Files) != 3 {
+		t.Errorf("expected 3 files in bios/pcsx2, got %d", len(pcsx2.Files))
+	}
+	if pcsx2.TotalSize != 600 {
+		t.Errorf("expected total size 600, got %d", pcsx2.TotalSize)
+	}
+
+	// File names should be relative to system key
+	nameSet := map[string]bool{}
+	for _, f := range pcsx2.Files {
+		nameSet[f.Name] = true
+	}
+	if !nameSet["file.bin"] {
+		t.Error("expected file.bin in pcsx2 files")
+	}
+	if !nameSet["resources/shader.glsl"] {
+		t.Error("expected resources/shader.glsl in pcsx2 files")
+	}
+	if !nameSet["resources/deep/other.bin"] {
+		t.Error("expected resources/deep/other.bin in pcsx2 files")
+	}
+}
+
+func TestBuildSubGroups(t *testing.T) {
+	g := &systemGroup{
+		Dir: "bios/pcsx2",
+		Files: []fileInfo{
+			{Key: "bios/pcsx2/file.bin", Name: "file.bin", Size: 100},
+			{Key: "bios/pcsx2/resources/shader.glsl", Name: "resources/shader.glsl", Size: 200},
+			{Key: "bios/pcsx2/resources/deep/other.bin", Name: "resources/deep/other.bin", Size: 300},
+			{Key: "bios/pcsx2/textures/tex.png", Name: "textures/tex.png", Size: 400},
+		},
+	}
+
+	sgs := buildSubGroups(g)
+
+	// Should have 3 sub-groups: "" (direct), "resources", "textures"
+	if len(sgs) != 3 {
+		t.Fatalf("expected 3 sub-groups, got %d", len(sgs))
+	}
+
+	// First should be direct files
+	if sgs[0].RelDir != "" {
+		t.Errorf("expected first sub-group to be direct files, got %q", sgs[0].RelDir)
+	}
+	if len(sgs[0].Files) != 1 {
+		t.Errorf("expected 1 direct file, got %d", len(sgs[0].Files))
+	}
+
+	// Resources should have 2 files
+	if sgs[1].RelDir != "resources" {
+		t.Errorf("expected resources, got %q", sgs[1].RelDir)
+	}
+	if len(sgs[1].Files) != 2 {
+		t.Errorf("expected 2 resources files, got %d", len(sgs[1].Files))
+	}
+
+	// Textures should have 1 file
+	if sgs[2].RelDir != "textures" {
+		t.Errorf("expected textures, got %q", sgs[2].RelDir)
+	}
+	if len(sgs[2].Files) != 1 {
+		t.Errorf("expected 1 textures file, got %d", len(sgs[2].Files))
+	}
+
+	// fullPath
+	if sgs[0].fullPath("bios/pcsx2") != "bios/pcsx2" {
+		t.Errorf("expected fullPath bios/pcsx2, got %s", sgs[0].fullPath("bios/pcsx2"))
+	}
+	if sgs[1].fullPath("bios/pcsx2") != "bios/pcsx2/resources" {
+		t.Errorf("expected fullPath bios/pcsx2/resources, got %s", sgs[1].fullPath("bios/pcsx2"))
+	}
+}
+
+func TestEncodeSelectionsSubGroups(t *testing.T) {
+	// Whole sub-group selected → directory path in sync_dirs
+	groups := []*systemGroup{
+		{
+			Dir: "bios/pcsx2",
+			Files: []fileInfo{
+				{Key: "bios/pcsx2/file.bin", Name: "file.bin", Size: 100, Selected: true},
+				{Key: "bios/pcsx2/resources/a.glsl", Name: "resources/a.glsl", Size: 200, Selected: true},
+				{Key: "bios/pcsx2/resources/b.glsl", Name: "resources/b.glsl", Size: 300, Selected: true},
+				{Key: "bios/pcsx2/textures/tex.png", Name: "textures/tex.png", Size: 400, Selected: false},
+			},
+		},
+	}
+
+	dirs, exclude := encodeSelections(groups)
+
+	// Should encode as: bios/pcsx2 dir + exclude textures subdir
+	// Encoding A: bios/pcsx2 + exclude bios/pcsx2/textures (2 entries)
+	// Encoding B: bios/pcsx2/file.bin + bios/pcsx2/resources (2 entries)
+	// A ties with B, A wins (<=)
+	found := false
+	for _, d := range dirs {
+		if d == "bios/pcsx2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected bios/pcsx2 in sync_dirs, got %v", dirs)
+	}
+	foundExclude := false
+	for _, e := range exclude {
+		if e == "bios/pcsx2/textures" {
+			foundExclude = true
+		}
+	}
+	if !foundExclude {
+		t.Errorf("expected bios/pcsx2/textures in sync_exclude, got %v", exclude)
+	}
+}
+
+func TestEncodeSelectionsSubGroupsFullExclude(t *testing.T) {
+	// Full sub-group excluded → directory path in sync_exclude
+	groups := []*systemGroup{
+		{
+			Dir: "bios/pcsx2",
+			Files: []fileInfo{
+				{Key: "bios/pcsx2/file.bin", Name: "file.bin", Size: 100, Selected: true},
+				{Key: "bios/pcsx2/resources/a.glsl", Name: "resources/a.glsl", Size: 200, Selected: false},
+				{Key: "bios/pcsx2/resources/b.glsl", Name: "resources/b.glsl", Size: 300, Selected: false},
+			},
+		},
+	}
+
+	dirs, exclude := encodeSelections(groups)
+
+	// Encoding A: bios/pcsx2 + exclude bios/pcsx2/resources (2 entries)
+	// Encoding B: bios/pcsx2/file.bin (1 entry)
+	// B wins
+	if len(dirs) != 1 || dirs[0] != "bios/pcsx2/file.bin" {
+		t.Errorf("expected [bios/pcsx2/file.bin], got %v", dirs)
+	}
+	if len(exclude) != 0 {
+		t.Errorf("expected no excludes, got %v", exclude)
+	}
+}
+
+func TestEncodeSelectionsPicksShorter(t *testing.T) {
+	// Many sub-groups selected, one excluded → dir + exclude is shorter
+	groups := []*systemGroup{
+		{
+			Dir: "bios/pcsx2",
+			Files: []fileInfo{
+				{Key: "bios/pcsx2/alpha/a.bin", Name: "alpha/a.bin", Size: 100, Selected: true},
+				{Key: "bios/pcsx2/beta/b.bin", Name: "beta/b.bin", Size: 100, Selected: true},
+				{Key: "bios/pcsx2/gamma/c.bin", Name: "gamma/c.bin", Size: 100, Selected: true},
+				{Key: "bios/pcsx2/delta/d.bin", Name: "delta/d.bin", Size: 100, Selected: false},
+			},
+		},
+	}
+
+	dirs, exclude := encodeSelections(groups)
+
+	// Encoding A: bios/pcsx2 + exclude bios/pcsx2/delta (2 entries)
+	// Encoding B: bios/pcsx2/alpha + bios/pcsx2/beta + bios/pcsx2/gamma (3 entries)
+	// A wins
+	if len(dirs) != 1 || dirs[0] != "bios/pcsx2" {
+		t.Errorf("expected [bios/pcsx2], got %v", dirs)
+	}
+	if len(exclude) != 1 || exclude[0] != "bios/pcsx2/delta" {
+		t.Errorf("expected [bios/pcsx2/delta], got %v", exclude)
+	}
+}
+
+func TestEncodeSelectionsNoSubGroups(t *testing.T) {
+	// Files all in system root — no sub-groups, uses flat encoding
+	groups := []*systemGroup{
+		{
+			Dir: "roms/snes",
+			Files: []fileInfo{
+				{Key: "roms/snes/A.sfc", Name: "A.sfc", Selected: true},
+				{Key: "roms/snes/B.sfc", Name: "B.sfc", Selected: true},
+				{Key: "roms/snes/C.sfc", Name: "C.sfc", Selected: false},
+			},
+		},
+	}
+
+	dirs, exclude := encodeSelections(groups)
+	if len(dirs) != 1 || dirs[0] != "roms/snes" {
+		t.Errorf("expected [roms/snes], got %v", dirs)
+	}
+	if len(exclude) != 1 || exclude[0] != "roms/snes/C.sfc" {
+		t.Errorf("expected [roms/snes/C.sfc], got %v", exclude)
+	}
+}
+
