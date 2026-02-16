@@ -66,6 +66,11 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 		log.Printf("Found %d files", len(newManifest.Files))
 	}
 
+	// Save hash cache early so interrupted uploads don't lose hashes
+	if !opts.DryRun {
+		saveCache(cache, cachePath, newManifest, opts.Verbose)
+	}
+
 	if opts.ManifestOnly {
 		result.Skipped = len(newManifest.Files)
 		if !opts.DryRun {
