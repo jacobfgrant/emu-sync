@@ -25,15 +25,15 @@ var initCmd = &cobra.Command{
 		fmt.Println("=============================")
 		fmt.Println()
 
-		endpoint := prompt(reader, "S3 endpoint (e.g., s3.us-west-002.backblazeb2.com): ")
-		if endpoint != "" && !strings.Contains(endpoint, "://") {
+		endpoint := promptRequired(reader, "S3 endpoint: ")
+		if !strings.Contains(endpoint, "://") {
 			endpoint = "https://" + endpoint
 		}
 
-		bucket := prompt(reader, "Bucket name: ")
+		bucket := promptRequired(reader, "Bucket name: ")
 		prefix := prompt(reader, "Bucket prefix (leave blank for root): ")
-		keyID := prompt(reader, "Access key ID: ")
-		secretKey := prompt(reader, "Secret access key: ")
+		keyID := promptRequired(reader, "Access key ID: ")
+		secretKey := promptRequired(reader, "Secret access key: ")
 
 		// Auto-detect region from B2 endpoint URLs
 		var region string
