@@ -64,6 +64,16 @@ func DefaultLocalManifestPath() string {
 	return filepath.Join(home, ".local", "share", "emu-sync", "local-manifest.json")
 }
 
+// DefaultUploadCachePath returns the upload hash cache path, using
+// XDG_DATA_HOME if set, otherwise ~/.local/share.
+func DefaultUploadCachePath() string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "emu-sync", "upload-cache.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "emu-sync", "upload-cache.json")
+}
+
 // Load reads and parses a TOML config file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

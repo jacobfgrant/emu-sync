@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
 	"github.com/jacobfgrant/emu-sync/internal/retry"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
@@ -21,17 +22,19 @@ type Options struct {
 	DryRun       bool
 	Verbose      bool
 	ManifestOnly bool
-	Workers      int  // number of parallel uploads; 0 or 1 = sequential
-	MaxRetries   int  // per-file retries with backoff; 0 = no retries
-	SkipDotfiles bool // skip files and directories starting with "."
+	Workers      int    // number of parallel uploads; 0 or 1 = sequential
+	MaxRetries   int    // per-file retries with backoff; 0 = no retries
+	SkipDotfiles bool   // skip files and directories starting with "."
+	CachePath    string // overrides default upload cache path; used by tests
 }
 
 // Result summarizes what an upload run did.
 type Result struct {
-	Uploaded []string
-	Skipped  int
-	Deleted  []string
-	Errors   []error
+	Uploaded  []string
+	Skipped   int
+	Deleted   []string
+	Errors    []error
+	CacheHits int
 }
 
 // uploadResult is sent back from worker goroutines.
@@ -45,14 +48,28 @@ type uploadResult struct {
 func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, error) {
 	result := &Result{}
 
+	cachePath := opts.CachePath
+	if cachePath == "" {
+		cachePath = config.DefaultUploadCachePath()
+	}
+
+	// Load hash cache for skipping unchanged files
+	cache := loadHashCache(cachePath)
+
 	// Build a new manifest from local files
 	log.Printf("Scanning local files...")
-	newManifest := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose)
-	log.Printf("Found %d files", len(newManifest.Files))
+	newManifest, cacheHits := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose, cache)
+	result.CacheHits = cacheHits
+	if cacheHits > 0 {
+		log.Printf("Found %d files (%d cached)", len(newManifest.Files), cacheHits)
+	} else {
+		log.Printf("Found %d files", len(newManifest.Files))
+	}
 
 	if opts.ManifestOnly {
 		result.Skipped = len(newManifest.Files)
 		if !opts.DryRun {
+			saveCache(cache, cachePath, newManifest, opts.Verbose)
 			manifestData, err := newManifest.ToJSON()
 			if err != nil {
 				return nil, fmt.Errorf("serializing manifest: %w", err)
@@ -113,8 +130,9 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 
 	result.Skipped = len(newManifest.Files) - len(toUpload)
 
-	// Upload the new manifest
+	// Upload the new manifest and save cache
 	if !opts.DryRun {
+		saveCache(cache, cachePath, newManifest, opts.Verbose)
 		manifestData, err := newManifest.ToJSON()
 		if err != nil {
 			return nil, fmt.Errorf("serializing manifest: %w", err)
@@ -125,6 +143,18 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	}
 
 	return result, nil
+}
+
+// saveCache prunes the cache to only keys in the manifest and writes it to disk.
+func saveCache(cache *hashCache, path string, m *manifest.Manifest, verbose bool) {
+	validKeys := make(map[string]struct{}, len(m.Files))
+	for key := range m.Files {
+		validKeys[key] = struct{}{}
+	}
+	cache.prune(validKeys)
+	if err := cache.save(path); err != nil && verbose {
+		log.Printf("warning: failed to save upload cache: %v", err)
+	}
 }
 
 func uploadSequential(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) {
@@ -186,8 +216,11 @@ func uploadParallel(ctx context.Context, client storage.Backend, opts Options, k
 }
 
 // buildManifest walks the source directory and hashes all files.
-func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verbose bool) *manifest.Manifest {
+// When cache is non-nil, files with matching mtime+size reuse the cached hash.
+// Returns the manifest and the number of cache hits.
+func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verbose bool, cache *hashCache) (*manifest.Manifest, int) {
 	m := manifest.New()
+	cacheHits := 0
 	for _, dir := range syncDirs {
 		dirPath := filepath.Join(sourcePath, dir)
 		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
@@ -222,12 +255,28 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 				return fmt.Errorf("stat %s: %w", path, err)
 			}
 
-			if verbose {
-				log.Printf("hashing: %s", key)
+			var hash string
+			if cache != nil {
+				if cached, ok := cache.lookup(key, info.Size(), info.ModTime()); ok {
+					hash = cached
+					cacheHits++
+					if verbose {
+						log.Printf("cached: %s", key)
+					}
+				}
 			}
-			hash, err := manifest.HashFile(path)
-			if err != nil {
-				return fmt.Errorf("hashing %s: %w", path, err)
+			if hash == "" {
+				if verbose {
+					log.Printf("hashing: %s", key)
+				}
+				var err error
+				hash, err = manifest.HashFile(path)
+				if err != nil {
+					return fmt.Errorf("hashing %s: %w", path, err)
+				}
+				if cache != nil {
+					cache.update(key, info.Size(), info.ModTime(), hash)
+				}
 			}
 
 			m.Files[key] = manifest.FileEntry{
@@ -242,7 +291,7 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 			}
 		}
 	}
-	return m
+	return m, cacheHits
 }
 
 // Summary returns a human-readable summary of the upload result.
@@ -251,6 +300,9 @@ func (r *Result) Summary() string {
 	fmt.Fprintf(&b, "Uploaded: %d files\n", len(r.Uploaded))
 	fmt.Fprintf(&b, "Skipped (unchanged): %d files\n", r.Skipped)
 	fmt.Fprintf(&b, "Deleted from bucket: %d files\n", len(r.Deleted))
+	if r.CacheHits > 0 {
+		fmt.Fprintf(&b, "Hash cache hits: %d files\n", r.CacheHits)
+	}
 	if len(r.Errors) > 0 {
 		fmt.Fprintf(&b, "Errors: %d\n", len(r.Errors))
 		for _, err := range r.Errors {
