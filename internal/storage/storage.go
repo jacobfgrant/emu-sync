@@ -140,6 +140,11 @@ func (c *Client) DownloadFile(ctx context.Context, key, localPath string) error 
 	}
 	defer result.Body.Close()
 
+	// Remove any existing file first so os.Create doesn't need write
+	// permission on a file we don't own (e.g., leftover temp files
+	// created by another user in a shared directory).
+	os.Remove(localPath)
+
 	f, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", localPath, err)
