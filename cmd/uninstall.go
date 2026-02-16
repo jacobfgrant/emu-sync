@@ -37,8 +37,8 @@ func uninstallLinux() error {
 	}
 
 	// Stop and disable the timer
-	_ = exec.Command("systemctl", "--user", "stop", "emu-sync.timer").Run()
-	_ = exec.Command("systemctl", "--user", "disable", "emu-sync.timer").Run()
+	_ = systemctlUser("stop", "emu-sync.timer").Run()
+	_ = systemctlUser("disable", "emu-sync.timer").Run()
 	fmt.Println("Stopped and disabled emu-sync.timer")
 
 	// Remove systemd units
@@ -47,7 +47,7 @@ func uninstallLinux() error {
 		removeFile(filepath.Join(systemdDir, name))
 	}
 
-	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	_ = systemctlUser("daemon-reload").Run()
 
 	// Remove desktop shortcuts and GUI script
 	removeFile(filepath.Join(home, ".local", "share", "applications", "emu-sync.desktop"))

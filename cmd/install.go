@@ -80,8 +80,8 @@ func installLinux(binPath string) error {
 	}
 
 	// Stop existing timer before overwriting unit files
-	_ = exec.Command("systemctl", "--user", "stop", "emu-sync.timer").Run()
-	_ = exec.Command("systemctl", "--user", "disable", "emu-sync.timer").Run()
+	_ = systemctlUser("stop", "emu-sync.timer").Run()
+	_ = systemctlUser("disable", "emu-sync.timer").Run()
 
 	// Install systemd units
 	systemdDir := filepath.Join(home, ".config", "systemd", "user")
@@ -104,10 +104,10 @@ func installLinux(binPath string) error {
 	fmt.Printf("Installed %s\n", timerPath)
 
 	// Enable and start the timer
-	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+	if err := systemctlUser("daemon-reload").Run(); err != nil {
 		fmt.Printf("Warning: could not reload systemd: %v\n", err)
 	}
-	if err := exec.Command("systemctl", "--user", "enable", "--now", "emu-sync.timer").Run(); err != nil {
+	if err := systemctlUser("enable", "--now", "emu-sync.timer").Run(); err != nil {
 		fmt.Printf("Warning: could not enable timer: %v\n", err)
 	} else {
 		fmt.Println("Enabled emu-sync.timer (syncs every 6 hours)")
@@ -222,6 +222,19 @@ func installMacOS(binPath string) error {
 		fmt.Println("You can also open the emu-sync app in ~/Applications.")
 	}
 	return nil
+}
+
+// systemctlUser returns an exec.Cmd for "systemctl --user <args>".
+// If DBUS_SESSION_BUS_ADDRESS is not set, it injects the standard
+// fallback (unix:path=/run/user/<uid>/bus) so that systemctl --user
+// works in environments like SSH or curl-piped scripts.
+func systemctlUser(args ...string) *exec.Cmd {
+	cmd := exec.Command("systemctl", append([]string{"--user"}, args...)...)
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		cmd.Env = append(os.Environ(),
+			fmt.Sprintf("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%d/bus", os.Getuid()))
+	}
+	return cmd
 }
 
 func copyFile(src, dst string) error {
