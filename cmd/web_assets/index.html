@@ -442,6 +442,29 @@ main {
 .subgroup-caret.expanded { transform: rotate(90deg); }
 
 .subgroup-files .file-row { padding-left: 48px; }
+
+.search-bar {
+  margin-bottom: 16px;
+}
+
+.search-bar input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  outline: none;
+}
+
+.search-bar input:focus {
+  border-color: var(--accent);
+}
+
+.search-bar input::placeholder {
+  color: var(--text-dim);
+}
 </style>
 </head>
 <body>
@@ -619,10 +642,13 @@ main {
     updateTotals();
   }
 
+  var filterTerm = "";
+
   function renderFileRow(si, fi) {
     var file = systems[si].files[fi];
     var row = document.createElement("div");
     row.className = "file-row";
+    row.dataset.fileName = file.name.toLowerCase();
 
     var fcb = document.createElement("input");
     fcb.type = "checkbox";
@@ -651,9 +677,64 @@ main {
     return row;
   }
 
+  function applyFilter() {
+    var cards = document.querySelectorAll(".system-card");
+    for (var ci = 0; ci < cards.length; ci++) {
+      var card = cards[ci];
+      var anyVisible = false;
+
+      // Filter file rows
+      var rows = card.querySelectorAll(".file-row");
+      for (var ri = 0; ri < rows.length; ri++) {
+        var match = !filterTerm || rows[ri].dataset.fileName.indexOf(filterTerm) !== -1;
+        rows[ri].style.display = match ? "" : "none";
+        if (match) anyVisible = true;
+      }
+
+      // Filter sub-group rows: visible if any child file matches
+      var sgRows = card.querySelectorAll(".subgroup-row");
+      for (var si = 0; si < sgRows.length; si++) {
+        var sgFiles = sgRows[si].nextElementSibling;
+        if (!sgFiles || !sgFiles.classList.contains("subgroup-files")) continue;
+        var sgVisible = false;
+        var sgFileRows = sgFiles.querySelectorAll(".file-row");
+        for (var fi = 0; fi < sgFileRows.length; fi++) {
+          if (sgFileRows[fi].style.display !== "none") { sgVisible = true; break; }
+        }
+        sgRows[si].style.display = sgVisible ? "" : "none";
+        if (!sgVisible) sgFiles.style.display = "none";
+      }
+
+      // Also match against system dir name
+      if (!anyVisible && filterTerm && card.dataset.sysDir.indexOf(filterTerm) !== -1) {
+        anyVisible = true;
+      }
+
+      card.style.display = anyVisible || !filterTerm ? "" : "none";
+
+      // Auto-expand cards when filtering
+      if (filterTerm && anyVisible) {
+        card.open = true;
+      }
+    }
+  }
+
   function render() {
     var main = document.getElementById("main");
     main.innerHTML = "";
+
+    var searchBar = document.createElement("div");
+    searchBar.className = "search-bar";
+    var searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Filter files...";
+    searchInput.id = "search-input";
+    searchInput.addEventListener("input", function() {
+      filterTerm = searchInput.value.toLowerCase();
+      applyFilter();
+    });
+    searchBar.appendChild(searchInput);
+    main.appendChild(searchBar);
 
     for (var si = 0; si < systems.length; si++) {
       var sys = systems[si];
@@ -663,6 +744,7 @@ main {
 
       var card = document.createElement("details");
       card.className = "system-card";
+      card.dataset.sysDir = sys.dir.toLowerCase();
 
       var summary = document.createElement("summary");
 
