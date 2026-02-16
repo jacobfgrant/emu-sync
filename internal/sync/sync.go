@@ -19,6 +19,11 @@ import (
 
 const tmpSuffix = ".emu-sync-tmp"
 
+// saveThreshold is the cumulative bytes downloaded before the local
+// manifest is flushed to disk mid-sync. This limits re-downloading
+// if the process is interrupted.
+const saveThreshold = 50 * 1024 * 1024 // 50 MB
+
 func acquireLock() (*os.File, error) {
 	lockDir := filepath.Dir(config.DefaultLocalManifestPath())
 	os.MkdirAll(lockDir, 0o755)
@@ -157,9 +162,9 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 			result.Downloaded = append(result.Downloaded, key)
 		}
 	} else if opts.Workers > 1 && len(toDownload) > 1 {
-		downloadParallel(ctx, client, cfg, filteredRemote, toDownload, opts, result, local)
+		downloadParallel(ctx, client, cfg, filteredRemote, toDownload, opts, result, local, localManifestPath)
 	} else {
-		downloadSequential(ctx, client, cfg, filteredRemote, toDownload, opts, result, local)
+		downloadSequential(ctx, client, cfg, filteredRemote, toDownload, opts, result, local, localManifestPath)
 	}
 
 	// Delete local files removed from remote
@@ -220,9 +225,10 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 	return result, nil
 }
 
-func downloadSequential(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
+func downloadSequential(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest, localManifestPath string) {
 	prog := opts.Progress
 	maxRetries := opts.MaxRetries
+	var unsavedBytes int64
 	for _, key := range keys {
 		entry := filteredRemote.Files[key]
 		if prog != nil {
@@ -243,10 +249,19 @@ func downloadSequential(ctx context.Context, client storage.Backend, cfg *config
 		if prog != nil {
 			prog.Complete(key)
 		}
+		unsavedBytes += entry.Size
+		if unsavedBytes >= saveThreshold {
+			if err := local.SaveJSON(localManifestPath); err != nil {
+				if opts.Verbose {
+					log.Printf("warning: mid-sync manifest save: %v", err)
+				}
+			}
+			unsavedBytes = 0
+		}
 	}
 }
 
-func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest) {
+func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.Config, filteredRemote *manifest.Manifest, keys []string, opts Options, result *Result, local *manifest.Manifest, localManifestPath string) {
 	// Channel for sending keys to workers
 	jobs := make(chan string, len(keys))
 	// Channel for collecting results from workers
@@ -291,6 +306,7 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 
 	// Collect results
 	prog := opts.Progress
+	var unsavedBytes int64
 	for dr := range results {
 		if dr.err != nil {
 			result.Errors = append(result.Errors, dr.err)
@@ -303,6 +319,15 @@ func downloadParallel(ctx context.Context, client storage.Backend, cfg *config.C
 		result.Downloaded = append(result.Downloaded, dr.key)
 		if prog != nil {
 			prog.Complete(dr.key)
+		}
+		unsavedBytes += dr.entry.Size
+		if unsavedBytes >= saveThreshold {
+			if err := local.SaveJSON(localManifestPath); err != nil {
+				if opts.Verbose {
+					log.Printf("warning: mid-sync manifest save: %v", err)
+				}
+			}
+			unsavedBytes = 0
 		}
 	}
 }
