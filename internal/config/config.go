@@ -29,6 +29,7 @@ type SyncConfig struct {
 	Workers        int      `toml:"workers"`
 	MaxRetries     int      `toml:"max_retries"`
 	BandwidthLimit string   `toml:"bandwidth_limit,omitempty"`
+	SkipDotfiles   *bool    `toml:"skip_dotfiles,omitempty"`
 }
 
 // WebConfig holds settings for the web UI.
@@ -98,6 +99,10 @@ func (c *Config) validate() error {
 	c.Sync.EmulationPath = expandPath(c.Sync.EmulationPath)
 	if len(c.Sync.SyncDirs) == 0 {
 		c.Sync.SyncDirs = []string{"roms", "bios"}
+	}
+	if c.Sync.SkipDotfiles == nil {
+		t := true
+		c.Sync.SkipDotfiles = &t
 	}
 	return nil
 }

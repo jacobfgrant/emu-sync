@@ -151,6 +151,7 @@ sync_dirs = ["roms", "bios"]
 # sync_exclude = ["roms/ps2/Some Huge Game.iso"]  # optional: exclude specific files
 delete = true
 workers = 4
+# skip_dotfiles = true  # skip hidden files like .DS_Store during upload (default true)
 # max_retries = 3       # per-file retries with exponential backoff (default 3)
 # bandwidth_limit = "10MB"  # throttle transfers (e.g., "500KB", "10MB", "1GB")
 

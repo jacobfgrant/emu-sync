@@ -226,6 +226,51 @@ emulation_path = "$HOME/Emulation"
 	}
 }
 
+func TestSkipDotfilesDefaultTrue(t *testing.T) {
+	path := writeTempConfig(t, validTOML)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Sync.SkipDotfiles == nil {
+		t.Fatal("SkipDotfiles should not be nil after load")
+	}
+	if !*cfg.Sync.SkipDotfiles {
+		t.Error("SkipDotfiles should default to true")
+	}
+}
+
+func TestSkipDotfilesExplicitFalse(t *testing.T) {
+	toml := `
+[storage]
+endpoint_url = "https://s3.us-west-004.backblazeb2.com"
+bucket = "my-roms"
+key_id = "004abc"
+secret_key = "K004xyz"
+region = "us-west-004"
+
+[sync]
+emulation_path = "/tmp/Emulation"
+sync_dirs = ["roms"]
+skip_dotfiles = false
+`
+	path := writeTempConfig(t, toml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Sync.SkipDotfiles == nil {
+		t.Fatal("SkipDotfiles should not be nil")
+	}
+	if *cfg.Sync.SkipDotfiles {
+		t.Error("SkipDotfiles should be false when explicitly set")
+	}
+}
+
 func TestShouldSync(t *testing.T) {
 	cfg := &Config{
 		Sync: SyncConfig{

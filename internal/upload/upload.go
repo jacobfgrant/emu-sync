@@ -21,8 +21,9 @@ type Options struct {
 	DryRun       bool
 	Verbose      bool
 	ManifestOnly bool
-	Workers      int // number of parallel uploads; 0 or 1 = sequential
-	MaxRetries   int // per-file retries with backoff; 0 = no retries
+	Workers      int  // number of parallel uploads; 0 or 1 = sequential
+	MaxRetries   int  // per-file retries with backoff; 0 = no retries
+	SkipDotfiles bool // skip files and directories starting with "."
 }
 
 // Result summarizes what an upload run did.
@@ -45,7 +46,7 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	result := &Result{}
 
 	// Build a new manifest from local files
-	newManifest := buildManifest(opts.SourcePath, opts.SyncDirs, opts.Verbose)
+	newManifest := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose)
 
 	if opts.ManifestOnly {
 		result.Skipped = len(newManifest.Files)
@@ -183,7 +184,7 @@ func uploadParallel(ctx context.Context, client storage.Backend, opts Options, k
 }
 
 // buildManifest walks the source directory and hashes all files.
-func buildManifest(sourcePath string, syncDirs []string, verbose bool) *manifest.Manifest {
+func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verbose bool) *manifest.Manifest {
 	m := manifest.New()
 	for _, dir := range syncDirs {
 		dirPath := filepath.Join(sourcePath, dir)
@@ -199,6 +200,12 @@ func buildManifest(sourcePath string, syncDirs []string, verbose bool) *manifest
 				return err
 			}
 			if d.IsDir() {
+				if skipDotfiles && strings.HasPrefix(d.Name(), ".") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if skipDotfiles && strings.HasPrefix(d.Name(), ".") {
 				return nil
 			}
 

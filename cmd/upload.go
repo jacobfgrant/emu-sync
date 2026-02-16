@@ -71,6 +71,7 @@ uploads and you just need to update the manifest.`,
 			ManifestOnly: uploadManifestOnly,
 			Workers:      workers,
 			MaxRetries:   maxRetries,
+			SkipDotfiles: *cfg.Sync.SkipDotfiles,
 		})
 		if err != nil {
 			return err

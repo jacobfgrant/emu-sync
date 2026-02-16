@@ -273,6 +273,91 @@ func TestUploadParallelWithErrors(t *testing.T) {
 	}
 }
 
+func TestUploadSkipsDotfiles(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc":    "snes rom data",
+		"roms/snes/.DS_Store":   "mac junk",
+		"roms/.DS_Store":        "mac junk",
+		"bios/scph5501.bin":     "bios data",
+		"bios/.hidden":          "hidden file",
+	})
+
+	mock := storage.NewMockBackend()
+	result, err := Run(context.Background(), mock, Options{
+		SourcePath:   source,
+		SyncDirs:     []string{"roms", "bios"},
+		SkipDotfiles: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Uploaded) != 2 {
+		t.Errorf("uploaded %d files, want 2", len(result.Uploaded))
+	}
+
+	// Dotfiles should not be in bucket
+	for key := range mock.Objects {
+		if key == storage.ManifestKey {
+			continue
+		}
+		if filepath.Base(key)[0] == '.' {
+			t.Errorf("dotfile %q should not have been uploaded", key)
+		}
+	}
+
+	// Manifest should not contain dotfiles
+	m := verifyManifest(t, mock)
+	for key := range m.Files {
+		if filepath.Base(key)[0] == '.' {
+			t.Errorf("dotfile %q should not be in manifest", key)
+		}
+	}
+}
+
+func TestUploadSkipsDotfileDirectories(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc":       "snes rom data",
+		"roms/.git/config":         "git config",
+		"roms/.git/objects/abc":    "git object",
+	})
+
+	mock := storage.NewMockBackend()
+	result, err := Run(context.Background(), mock, Options{
+		SourcePath:   source,
+		SyncDirs:     []string{"roms"},
+		SkipDotfiles: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Uploaded) != 1 {
+		t.Errorf("uploaded %d files, want 1", len(result.Uploaded))
+	}
+}
+
+func TestUploadIncludesDotfilesWhenDisabled(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc":  "snes rom data",
+		"roms/snes/.DS_Store": "mac junk",
+	})
+
+	mock := storage.NewMockBackend()
+	result, err := Run(context.Background(), mock, Options{
+		SourcePath:   source,
+		SyncDirs:     []string{"roms"},
+		SkipDotfiles: false,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Uploaded) != 2 {
+		t.Errorf("uploaded %d files, want 2 (dotfile included)", len(result.Uploaded))
+	}
+}
+
 // --- helpers ---
 
 // setupSourceDir creates a temp directory tree with the given files.
