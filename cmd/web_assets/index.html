@@ -1007,6 +1007,8 @@ main {
   function createResultCard(headerText, cardClass) {
     var old = getResultCard();
     if (old) old.remove();
+    var ss = document.getElementById("sync-status");
+    if (ss) ss.remove();
 
     var card = document.createElement("div");
     card.id = "result-card";
