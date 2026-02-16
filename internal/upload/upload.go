@@ -46,7 +46,9 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	result := &Result{}
 
 	// Build a new manifest from local files
+	log.Printf("Scanning local files...")
 	newManifest := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose)
+	log.Printf("Found %d files", len(newManifest.Files))
 
 	if opts.ManifestOnly {
 		result.Skipped = len(newManifest.Files)
@@ -220,6 +222,9 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 				return fmt.Errorf("stat %s: %w", path, err)
 			}
 
+			if verbose {
+				log.Printf("hashing: %s", key)
+			}
 			hash, err := manifest.HashFile(path)
 			if err != nil {
 				return fmt.Errorf("hashing %s: %w", path, err)
