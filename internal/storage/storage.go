@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -140,12 +141,14 @@ func (c *Client) DownloadFile(ctx context.Context, key, localPath string) error 
 	}
 	defer result.Body.Close()
 
-	// Remove any existing file first so os.Create doesn't need write
-	// permission on a file we don't own (e.g., leftover temp files
-	// created by another user in a shared directory).
-	os.Remove(localPath)
-
 	f, err := os.Create(localPath)
+	if errors.Is(err, os.ErrPermission) {
+		// The file may exist and be owned by another user (e.g., in a
+		// shared group directory). Remove it and retry — directory write
+		// permission is sufficient for removal.
+		os.Remove(localPath)
+		f, err = os.Create(localPath)
+	}
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", localPath, err)
 	}
