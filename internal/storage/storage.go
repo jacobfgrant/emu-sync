@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
@@ -94,6 +95,7 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // UploadFile uploads a local file to the given key in the bucket.
+// Uses the S3 multipart upload manager for files over 5 MB.
 func (c *Client) UploadFile(ctx context.Context, key, localPath string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -104,7 +106,8 @@ func (c *Client) UploadFile(ctx context.Context, key, localPath string) error {
 	var body io.Reader = f
 	body = c.wrapReader(body)
 
-	_, err = c.s3.PutObject(ctx, &s3.PutObjectInput{
+	uploader := manager.NewUploader(c.s3)
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(c.prefixedKey(key)),
 		Body:   body,
