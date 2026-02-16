@@ -83,8 +83,14 @@ func (m *Manifest) SaveJSON(path string) error {
 		return fmt.Errorf("serializing manifest: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming manifest: %w", err)
 	}
 
 	return nil
