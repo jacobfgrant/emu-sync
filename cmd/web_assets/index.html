@@ -387,6 +387,61 @@ main {
 }
 
 .delete-toggle.danger { color: var(--danger); }
+
+.subgroup-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px 8px 28px;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background-color 0.08s;
+}
+
+.subgroup-row:hover { background: var(--bg-row-hover); }
+.subgroup-row:nth-child(even) { background: var(--bg-row-alt); }
+.subgroup-row:nth-child(even):hover { background: var(--bg-row-hover); }
+.subgroup-row:not(:last-child) { border-bottom: 1px solid var(--border-light); }
+
+.subgroup-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.subgroup-name {
+  font-weight: 500;
+  font-size: 0.875rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subgroup-meta {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.subgroup-caret {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.subgroup-caret.expanded { transform: rotate(90deg); }
+
+.subgroup-files .file-row { padding-left: 48px; }
 </style>
 </head>
 <body>
@@ -469,6 +524,56 @@ main {
     return "partial";
   }
 
+  // getSubDir returns the immediate child directory of sysDir that contains
+  // fileKey, or "" if the file is directly in sysDir.
+  function getSubDir(sysDir, fileKey) {
+    var rel = fileKey.slice(sysDir.length + 1);
+    var slash = rel.indexOf("/");
+    return slash === -1 ? "" : rel.slice(0, slash);
+  }
+
+  // buildClientSubGroups groups files by their immediate subdirectory.
+  // Returns an array of {relDir, fileIndices} sorted with "" first.
+  function buildClientSubGroups(sys) {
+    var map = {};
+    for (var i = 0; i < sys.files.length; i++) {
+      var sd = getSubDir(sys.dir, sys.files[i].key);
+      if (!map[sd]) map[sd] = [];
+      map[sd].push(i);
+    }
+    var groups = [];
+    var keys = Object.keys(map).sort();
+    for (var k = 0; k < keys.length; k++) {
+      groups.push({ relDir: keys[k], fileIndices: map[keys[k]] });
+    }
+    // Move "" to front
+    for (var g = 0; g < groups.length; g++) {
+      if (groups[g].relDir === "") {
+        var first = groups.splice(g, 1)[0];
+        groups.unshift(first);
+        break;
+      }
+    }
+    return groups;
+  }
+
+  function updateSubGroupCheckbox(sysIdx, sgIdx) {
+    var cb = document.getElementById("sg-cb-" + sysIdx + "-" + sgIdx);
+    if (!cb) return;
+    var sys = systems[sysIdx];
+    var sg = sys._subGroups[sgIdx];
+    var sel = 0, total = 0, selSize = 0;
+    for (var i = 0; i < sg.fileIndices.length; i++) {
+      var f = sys.files[sg.fileIndices[i]];
+      total++;
+      if (f.selected) { sel++; selSize += f.size; }
+    }
+    cb.checked = sel > 0;
+    cb.indeterminate = sel > 0 && sel < total;
+    var meta = document.getElementById("sg-meta-" + sysIdx + "-" + sgIdx);
+    if (meta) meta.textContent = sel + "/" + total + " files \u00B7 " + formatSize(selSize);
+  }
+
   function updateSystemCheckbox(sysIdx) {
     var cb = document.getElementById("sys-cb-" + sysIdx);
     var state = systemState(systems[sysIdx]);
@@ -481,6 +586,12 @@ main {
       if (sys.files[i].selected) sel++;
     }
     meta.textContent = sel + "/" + sys.files.length + " files \u00B7 " + sys.totalSizeFormatted;
+    // Update sub-group checkboxes too
+    if (sys._subGroups) {
+      for (var g = 0; g < sys._subGroups.length; g++) {
+        updateSubGroupCheckbox(sysIdx, g);
+      }
+    }
   }
 
   function setAllFiles(sysIdx, value) {
@@ -494,12 +605,62 @@ main {
     updateTotals();
   }
 
+  function setSubGroupFiles(sysIdx, sgIdx, value) {
+    var sys = systems[sysIdx];
+    var sg = sys._subGroups[sgIdx];
+    for (var i = 0; i < sg.fileIndices.length; i++) {
+      var fi = sg.fileIndices[i];
+      sys.files[fi].selected = value;
+      var fcb = document.getElementById("file-cb-" + sysIdx + "-" + fi);
+      if (fcb) fcb.checked = value;
+    }
+    updateSubGroupCheckbox(sysIdx, sgIdx);
+    updateSystemCheckbox(sysIdx);
+    updateTotals();
+  }
+
+  function renderFileRow(si, fi) {
+    var file = systems[si].files[fi];
+    var row = document.createElement("div");
+    row.className = "file-row";
+
+    var fcb = document.createElement("input");
+    fcb.type = "checkbox";
+    fcb.className = "file-checkbox";
+    fcb.id = "file-cb-" + si + "-" + fi;
+    fcb.checked = file.selected;
+    fcb.addEventListener("change", (function(sIdx, fIdx) {
+      return function(e) {
+        systems[sIdx].files[fIdx].selected = e.target.checked;
+        updateSystemCheckbox(sIdx);
+        updateTotals();
+      };
+    })(si, fi));
+
+    var fname = document.createElement("span");
+    fname.className = "file-name";
+    fname.textContent = file.name;
+
+    var fsize = document.createElement("span");
+    fsize.className = "file-size";
+    fsize.textContent = file.sizeFormatted;
+
+    row.appendChild(fcb);
+    row.appendChild(fname);
+    row.appendChild(fsize);
+    return row;
+  }
+
   function render() {
     var main = document.getElementById("main");
     main.innerHTML = "";
 
     for (var si = 0; si < systems.length; si++) {
       var sys = systems[si];
+      sys._subGroups = buildClientSubGroups(sys);
+      var hasSubGroups = sys._subGroups.length > 1 ||
+        (sys._subGroups.length === 1 && sys._subGroups[0].relDir !== "");
+
       var card = document.createElement("details");
       card.className = "system-card";
 
@@ -509,7 +670,6 @@ main {
       cb.type = "checkbox";
       cb.className = "system-checkbox";
       cb.id = "sys-cb-" + si;
-      cb.dataset.sysIdx = si;
       cb.addEventListener("change", (function(idx) {
         return function(e) {
           e.stopPropagation();
@@ -563,38 +723,72 @@ main {
       var fileList = document.createElement("div");
       fileList.className = "file-list";
 
-      for (var fi = 0; fi < sys.files.length; fi++) {
-        var file = sys.files[fi];
-        var row = document.createElement("div");
-        row.className = "file-row";
+      if (!hasSubGroups) {
+        // Flat file list (no sub-groups)
+        for (var fi = 0; fi < sys.files.length; fi++) {
+          fileList.appendChild(renderFileRow(si, fi));
+        }
+      } else {
+        // Render sub-groups
+        for (var gi = 0; gi < sys._subGroups.length; gi++) {
+          var sg = sys._subGroups[gi];
+          if (sg.relDir === "") {
+            // Direct files — render individually
+            for (var di = 0; di < sg.fileIndices.length; di++) {
+              fileList.appendChild(renderFileRow(si, sg.fileIndices[di]));
+            }
+          } else {
+            // Sub-group row
+            (function(sysIdx, sgIdx, subGroup) {
+              var sgRow = document.createElement("div");
+              sgRow.className = "subgroup-row";
 
-        var fcb = document.createElement("input");
-        fcb.type = "checkbox";
-        fcb.className = "file-checkbox";
-        fcb.id = "file-cb-" + si + "-" + fi;
-        fcb.checked = file.selected;
-        fcb.dataset.sysIdx = si;
-        fcb.dataset.fileIdx = fi;
-        fcb.addEventListener("change", (function(sIdx, fIdx) {
-          return function(e) {
-            systems[sIdx].files[fIdx].selected = e.target.checked;
-            updateSystemCheckbox(sIdx);
-            updateTotals();
-          };
-        })(si, fi));
+              var sgCb = document.createElement("input");
+              sgCb.type = "checkbox";
+              sgCb.className = "subgroup-checkbox";
+              sgCb.id = "sg-cb-" + sysIdx + "-" + sgIdx;
+              sgCb.addEventListener("click", function(e) { e.stopPropagation(); });
+              sgCb.addEventListener("change", function(e) {
+                setSubGroupFiles(sysIdx, sgIdx, e.target.checked);
+              });
 
-        var fname = document.createElement("span");
-        fname.className = "file-name";
-        fname.textContent = file.name;
+              var sgName = document.createElement("span");
+              sgName.className = "subgroup-name";
+              sgName.textContent = subGroup.relDir + "/";
 
-        var fsize = document.createElement("span");
-        fsize.className = "file-size";
-        fsize.textContent = file.sizeFormatted;
+              var sgMeta = document.createElement("span");
+              sgMeta.className = "subgroup-meta";
+              sgMeta.id = "sg-meta-" + sysIdx + "-" + sgIdx;
 
-        row.appendChild(fcb);
-        row.appendChild(fname);
-        row.appendChild(fsize);
-        fileList.appendChild(row);
+              var sgCaret = document.createElement("span");
+              sgCaret.className = "subgroup-caret";
+              sgCaret.textContent = "\u25B6";
+
+              sgRow.appendChild(sgCb);
+              sgRow.appendChild(sgName);
+              sgRow.appendChild(sgMeta);
+              sgRow.appendChild(sgCaret);
+
+              var sgFiles = document.createElement("div");
+              sgFiles.className = "subgroup-files";
+              sgFiles.style.display = "none";
+
+              for (var sfi = 0; sfi < subGroup.fileIndices.length; sfi++) {
+                sgFiles.appendChild(renderFileRow(sysIdx, subGroup.fileIndices[sfi]));
+              }
+
+              sgRow.addEventListener("click", function(e) {
+                if (e.target.tagName === "INPUT") return;
+                var visible = sgFiles.style.display !== "none";
+                sgFiles.style.display = visible ? "none" : "";
+                sgCaret.className = "subgroup-caret" + (visible ? "" : " expanded");
+              });
+
+              fileList.appendChild(sgRow);
+              fileList.appendChild(sgFiles);
+            })(si, gi, sg);
+          }
+        }
       }
 
       card.appendChild(fileList);
