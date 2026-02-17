@@ -464,6 +464,172 @@ func TestSyncLockSkippedForDryRun(t *testing.T) {
 	}
 }
 
+func TestSyncSavesManifestDuringDownload(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game1.sfc": {content: "game1", size: 5},
+		"roms/snes/Game2.sfc": {content: "game2", size: 5},
+		"roms/snes/Game3.sfc": {content: "game3", size: 5},
+	})
+	mock.DownloadErrors["roms/snes/Game3.sfc"] = fmt.Errorf("simulated error")
+
+	cfg := testConfig(emuDir)
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		SaveThreshold:     1, // flush after every file
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 2 {
+		t.Errorf("downloaded %d, want 2", len(result.Downloaded))
+	}
+	if len(result.Errors) != 1 {
+		t.Errorf("errors = %d, want 1", len(result.Errors))
+	}
+
+	// The on-disk manifest should have the 2 successful files
+	local, err := manifest.LoadJSON(manifestPath)
+	if err != nil {
+		t.Fatalf("loading manifest: %v", err)
+	}
+	if len(local.Files) != 2 {
+		t.Errorf("manifest has %d entries, want 2", len(local.Files))
+	}
+	if _, ok := local.Files["roms/snes/Game3.sfc"]; ok {
+		t.Error("failed file should not be in manifest")
+	}
+}
+
+func TestSyncResumesAfterInterruption(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game1.sfc": {content: "game1", size: 5},
+		"roms/snes/Game2.sfc": {content: "game2", size: 5},
+	})
+	mock.DownloadErrors["roms/snes/Game2.sfc"] = fmt.Errorf("simulated error")
+
+	cfg := testConfig(emuDir)
+
+	// Phase 1: Game1 succeeds, Game2 fails
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		SaveThreshold:     1,
+	})
+	if err != nil {
+		t.Fatalf("phase 1: %v", err)
+	}
+	if len(result.Downloaded) != 1 {
+		t.Errorf("phase 1 downloaded %d, want 1", len(result.Downloaded))
+	}
+
+	// Phase 2: fix the error, re-run
+	delete(mock.DownloadErrors, "roms/snes/Game2.sfc")
+	mock.Calls = nil
+
+	result, err = Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		SaveThreshold:     1,
+	})
+	if err != nil {
+		t.Fatalf("phase 2: %v", err)
+	}
+
+	// Only Game2 should be downloaded (Game1 already in local manifest)
+	if len(result.Downloaded) != 1 {
+		t.Errorf("phase 2 downloaded %d, want 1", len(result.Downloaded))
+	}
+
+	// Verify only Game2 was fetched
+	downloadCalls := 0
+	for _, call := range mock.Calls {
+		if strings.HasPrefix(call, "DownloadFile:roms/snes/Game1.sfc") {
+			t.Error("Game1.sfc should not have been re-downloaded")
+		}
+		if strings.HasPrefix(call, "DownloadFile:roms/snes/Game2.sfc") {
+			downloadCalls++
+		}
+	}
+	if downloadCalls != 1 {
+		t.Errorf("Game2.sfc download calls = %d, want 1", downloadCalls)
+	}
+}
+
+func TestSyncParallelSavesManifestDuringDownload(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game1.sfc": {content: "game1", size: 5},
+		"roms/snes/Game2.sfc": {content: "game2", size: 5},
+		"roms/snes/Game3.sfc": {content: "game3", size: 5},
+	})
+	mock.DownloadErrors["roms/snes/Game3.sfc"] = fmt.Errorf("simulated error")
+
+	cfg := testConfig(emuDir)
+	result, err := Run(context.Background(), mock, cfg, Options{
+		LocalManifestPath: manifestPath,
+		SaveThreshold:     1,
+		Workers:           2,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 2 {
+		t.Errorf("downloaded %d, want 2", len(result.Downloaded))
+	}
+	if len(result.Errors) != 1 {
+		t.Errorf("errors = %d, want 1", len(result.Errors))
+	}
+
+	local, err := manifest.LoadJSON(manifestPath)
+	if err != nil {
+		t.Fatalf("loading manifest: %v", err)
+	}
+	if len(local.Files) != 2 {
+		t.Errorf("manifest has %d entries, want 2", len(local.Files))
+	}
+}
+
+func TestSyncFiltersBySyncExclude(t *testing.T) {
+	emuDir := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc": {content: "snes rom", size: 8},
+		"roms/gba/Game.gba":  {content: "gba rom", size: 7},
+		"saves/game.sav":     {content: "save data", size: 9},
+	})
+
+	cfg := testConfig(emuDir)
+	cfg.Sync.SyncDirs = []string{"roms"}
+	cfg.Sync.SyncExclude = []string{"roms/gba"}
+
+	result, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.Downloaded) != 1 {
+		t.Errorf("downloaded %d, want 1 (only roms/snes)", len(result.Downloaded))
+	}
+
+	// Verify only snes file exists on disk
+	assertFileContent(t, filepath.Join(emuDir, "roms/snes/Game.sfc"), "snes rom")
+	if _, err := os.Stat(filepath.Join(emuDir, "roms/gba/Game.gba")); !os.IsNotExist(err) {
+		t.Error("excluded roms/gba/Game.gba should not exist")
+	}
+	if _, err := os.Stat(filepath.Join(emuDir, "saves/game.sav")); !os.IsNotExist(err) {
+		t.Error("saves/game.sav should not exist (not in sync_dirs)")
+	}
+}
+
 // --- helpers ---
 
 type mockFile struct {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -449,6 +450,75 @@ func TestUploadDryRunDoesNotSaveCache(t *testing.T) {
 	// Cache file should not exist after dry run
 	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
 		t.Error("cache file should not exist after dry run")
+	}
+}
+
+func TestUploadCacheSavedBeforeUpload(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game1.sfc": "game1 data",
+		"roms/snes/Game2.sfc": "game2 data",
+	})
+
+	mock := storage.NewMockBackend()
+	// Fail ALL uploads — cache should still be saved before uploads start
+	mock.UploadErrors["roms/snes/Game1.sfc"] = fmt.Errorf("simulated error")
+	mock.UploadErrors["roms/snes/Game2.sfc"] = fmt.Errorf("simulated error")
+
+	cachePath := tempCachePath(t)
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  cachePath,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Cache file should exist even though all uploads failed
+	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+		t.Fatal("cache file should exist (saved before uploads)")
+	}
+
+	// Verify cache has entries by loading it
+	cache := loadHashCache(cachePath)
+	if len(cache.Files) < 2 {
+		t.Errorf("cache has %d entries, want at least 2", len(cache.Files))
+	}
+}
+
+func TestUploadManifestOnly(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game1.sfc": "game1 data",
+		"roms/snes/Game2.sfc": "game2 data",
+	})
+
+	mock := storage.NewMockBackend()
+	result, err := Run(context.Background(), mock, Options{
+		SourcePath:   source,
+		SyncDirs:     []string{"roms"},
+		ManifestOnly: true,
+		CachePath:    tempCachePath(t),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// No files should be uploaded
+	if len(result.Uploaded) != 0 {
+		t.Errorf("uploaded %d files, want 0 with ManifestOnly", len(result.Uploaded))
+	}
+
+	// No UploadFile calls should have been made
+	for _, call := range mock.Calls {
+		if strings.HasPrefix(call, "UploadFile:") {
+			t.Errorf("unexpected UploadFile call: %s", call)
+		}
+	}
+
+	// Manifest should be in bucket
+	m := verifyManifest(t, mock)
+	if len(m.Files) != 2 {
+		t.Errorf("manifest has %d entries, want 2", len(m.Files))
 	}
 }
 

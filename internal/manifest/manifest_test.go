@@ -160,6 +160,60 @@ func TestHashFile(t *testing.T) {
 	}
 }
 
+func TestSaveJSONNoLeftoverTmp(t *testing.T) {
+	m := New()
+	m.Files["roms/snes/Game.sfc"] = FileEntry{Size: 1024, MD5: "abc123"}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.json")
+
+	if err := m.SaveJSON(path); err != nil {
+		t.Fatalf("SaveJSON: %v", err)
+	}
+
+	// The .tmp file should not exist after a successful save
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Error("temp file should not exist after successful SaveJSON")
+	}
+}
+
+func TestSaveJSONOverwritesExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.json")
+
+	// Save with 2 entries
+	m1 := New()
+	m1.Files["roms/a.rom"] = FileEntry{Size: 100, MD5: "aaa"}
+	m1.Files["roms/b.rom"] = FileEntry{Size: 200, MD5: "bbb"}
+	if err := m1.SaveJSON(path); err != nil {
+		t.Fatalf("first SaveJSON: %v", err)
+	}
+
+	// Overwrite with 3 entries
+	m2 := New()
+	m2.Files["roms/x.rom"] = FileEntry{Size: 10, MD5: "xxx"}
+	m2.Files["roms/y.rom"] = FileEntry{Size: 20, MD5: "yyy"}
+	m2.Files["roms/z.rom"] = FileEntry{Size: 30, MD5: "zzz"}
+	if err := m2.SaveJSON(path); err != nil {
+		t.Fatalf("second SaveJSON: %v", err)
+	}
+
+	loaded, err := LoadJSON(path)
+	if err != nil {
+		t.Fatalf("LoadJSON: %v", err)
+	}
+	if len(loaded.Files) != 3 {
+		t.Errorf("loaded %d files, want 3", len(loaded.Files))
+	}
+}
+
+func TestLoadJSONMissingFile(t *testing.T) {
+	_, err := LoadJSON(filepath.Join(t.TempDir(), "nonexistent.json"))
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
 func TestToJSON(t *testing.T) {
 	m := New()
 	m.Files["test.rom"] = FileEntry{Size: 1, MD5: "a"}
