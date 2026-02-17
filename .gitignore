@@ -29,3 +29,6 @@ dist/
 tmp/
 *.prof
 coverage.out
+
+# Override global gitignore (MANIFEST pattern matches internal/manifest/ on macOS)
+!internal/manifest/
