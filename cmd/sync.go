@@ -33,6 +33,10 @@ were removed from the bucket.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
+		if err := cfg.ValidateEmulationPath(); err != nil {
+			return err
+		}
+
 		workers := syncWorkers
 		if !cmd.Flags().Changed("workers") && cfg.Sync.Workers > 0 {
 			workers = cfg.Sync.Workers

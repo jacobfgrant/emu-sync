@@ -316,6 +316,13 @@ func (ws *webServer) runSync() {
 		close(ws.syncDone)
 	}()
 
+	if err := ws.cfg.ValidateEmulationPath(); err != nil {
+		ws.syncMu.Lock()
+		ws.syncResult = &intsync.Result{Errors: []error{err}}
+		ws.syncMu.Unlock()
+		return
+	}
+
 	workers := ws.cfg.Sync.Workers
 	if workers == 0 {
 		workers = 1
@@ -512,6 +519,13 @@ func (ws *webServer) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := ws.cfg.ValidateEmulationPath(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+		return
+	}
+
 	result, err := intsync.Verify(ws.cfg, ws.localManifestPath, false)
 	resp := map[string]interface{}{}
 	if err != nil {
@@ -577,6 +591,10 @@ set web.port in the config file.`,
 		cfg, err := config.Load(cfgPath)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
+		}
+
+		if err := cfg.ValidateEmulationPath(); err != nil {
+			return err
 		}
 
 		client := storage.NewClient(&cfg.Storage)

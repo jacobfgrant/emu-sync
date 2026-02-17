@@ -137,6 +137,29 @@ func expandPath(p string) string {
 	return filepath.Join(home, p)
 }
 
+// ValidatePath checks that a filesystem path exists and is a directory.
+// Use this for paths that may point to mounted drives or network shares.
+func ValidatePath(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("path does not exist: %s\n\nIf this is a removable drive or network share, make sure it is connected and mounted.", path)
+		}
+		return fmt.Errorf("cannot access path %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory: %s", path)
+	}
+	return nil
+}
+
+// ValidateEmulationPath checks that the configured emulation_path exists
+// and is a directory. Call this from commands that read or write files
+// under the emulation path (sync, upload, verify, web).
+func (c *Config) ValidateEmulationPath() error {
+	return ValidatePath(c.Sync.EmulationPath)
+}
+
 // ShouldSync returns true if the given key passes the sync_dirs include
 // filter and is not in sync_exclude. Keys match sync_dirs by prefix
 // (e.g., "roms/snes" matches "roms/snes/Game.sfc") or exact match

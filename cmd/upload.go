@@ -41,6 +41,10 @@ uploads and you just need to update the manifest.`,
 			source = cfg.Sync.EmulationPath
 		}
 
+		if err := config.ValidatePath(source); err != nil {
+			return fmt.Errorf("source directory: %w", err)
+		}
+
 		workers := uploadWorkers
 		if !cmd.Flags().Changed("workers") && cfg.Sync.Workers > 0 {
 			workers = cfg.Sync.Workers

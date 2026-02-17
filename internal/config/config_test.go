@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -343,6 +344,55 @@ func TestParseBandwidthLimit(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("ParseBandwidthLimit(%q) = %d, want %d", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestValidatePathExists(t *testing.T) {
+	dir := t.TempDir()
+	if err := ValidatePath(dir); err != nil {
+		t.Fatalf("ValidatePath on existing dir: %v", err)
+	}
+}
+
+func TestValidatePathNotExist(t *testing.T) {
+	err := ValidatePath("/nonexistent/path/that/does/not/exist")
+	if err == nil {
+		t.Fatal("expected error for nonexistent path")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "mounted") {
+		t.Errorf("expected mount hint in error, got: %v", err)
+	}
+}
+
+func TestValidatePathIsFile(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "file.txt")
+	os.WriteFile(f, []byte("hello"), 0o644)
+
+	err := ValidatePath(f)
+	if err == nil {
+		t.Fatal("expected error for file path")
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("expected 'not a directory' in error, got: %v", err)
+	}
+}
+
+func TestValidateEmulationPath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{
+		Sync: SyncConfig{EmulationPath: dir},
+	}
+	if err := cfg.ValidateEmulationPath(); err != nil {
+		t.Fatalf("ValidateEmulationPath on existing dir: %v", err)
+	}
+
+	cfg.Sync.EmulationPath = "/nonexistent/emulation/path"
+	if err := cfg.ValidateEmulationPath(); err == nil {
+		t.Fatal("expected error for nonexistent emulation path")
 	}
 }
 

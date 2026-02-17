@@ -25,6 +25,10 @@ will be re-downloaded on the next sync.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
+		if err := cfg.ValidateEmulationPath(); err != nil {
+			return err
+		}
+
 		result, err := intsync.Verify(cfg, "", verbose)
 		if err != nil {
 			return err
