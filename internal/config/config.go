@@ -29,6 +29,7 @@ type SyncConfig struct {
 	Workers        int      `toml:"workers"`
 	MaxRetries     int      `toml:"max_retries"`
 	BandwidthLimit string   `toml:"bandwidth_limit,omitempty"`
+	SaveThreshold  string   `toml:"save_threshold,omitempty"`
 	SkipDotfiles   *bool    `toml:"skip_dotfiles,omitempty"`
 }
 

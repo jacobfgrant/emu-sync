@@ -331,6 +331,13 @@ func (ws *webServer) runSync() {
 		Progress:   progress.NewReporterWriter(log),
 	}
 
+	if ws.cfg.Sync.SaveThreshold != "" {
+		bytes, err := config.ParseBandwidthLimit(ws.cfg.Sync.SaveThreshold)
+		if err == nil && bytes > 0 {
+			opts.SaveThreshold = bytes
+		}
+	}
+
 	result, err := intsync.Run(context.Background(), ws.client, ws.cfg, opts)
 
 	ws.syncMu.Lock()

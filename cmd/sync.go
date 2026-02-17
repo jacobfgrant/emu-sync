@@ -62,6 +62,17 @@ were removed from the bucket.`,
 			Workers:    workers,
 			MaxRetries: maxRetries,
 		}
+
+		if cfg.Sync.SaveThreshold != "" {
+			bytes, err := config.ParseBandwidthLimit(cfg.Sync.SaveThreshold)
+			if err != nil {
+				return fmt.Errorf("parsing save_threshold: %w", err)
+			}
+			if bytes > 0 {
+				opts.SaveThreshold = bytes
+			}
+		}
+
 		if syncProgressJSON {
 			opts.Progress = progress.NewReporter(true)
 		}
