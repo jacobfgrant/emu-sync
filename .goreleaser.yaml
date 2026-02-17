@@ -47,3 +47,4 @@ nfpms:
     description: "Sync ROMs and BIOS files from an S3-compatible bucket"
     formats:
       - deb
+      - rpm
