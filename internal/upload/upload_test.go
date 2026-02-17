@@ -522,6 +522,26 @@ func TestUploadManifestOnly(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsMissingSourcePath(t *testing.T) {
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: "/nonexistent/source/path",
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent source path")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' in error, got: %v", err)
+	}
+
+	// Bucket should be untouched — no manifest uploaded
+	if _, ok := mock.Objects[storage.ManifestKey]; ok {
+		t.Error("manifest should not be uploaded when source path doesn't exist")
+	}
+}
+
 // --- helpers ---
 
 // setupSourceDir creates a temp directory tree with the given files.

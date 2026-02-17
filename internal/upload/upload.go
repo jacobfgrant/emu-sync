@@ -46,6 +46,10 @@ type uploadResult struct {
 // Run walks the source directory, computes hashes, uploads changed files,
 // and writes a new manifest to the bucket.
 func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, error) {
+	if err := config.ValidatePath(opts.SourcePath); err != nil {
+		return nil, fmt.Errorf("source path: %w", err)
+	}
+
 	result := &Result{}
 
 	cachePath := opts.CachePath

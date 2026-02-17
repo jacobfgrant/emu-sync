@@ -1139,6 +1139,93 @@ func TestHandleVerifyReturnsMissingFiles(t *testing.T) {
 	}
 }
 
+func TestHandleVerifyRejectsInvalidEmulationPath(t *testing.T) {
+	cfg := &config.Config{
+		Sync: config.SyncConfig{
+			EmulationPath: "/nonexistent/emu/path",
+		},
+	}
+	ws := &webServer{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/verify", nil)
+	ws.handleVerify(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	errMsg, ok := resp["error"].(string)
+	if !ok || errMsg == "" {
+		t.Error("expected error message in response")
+	}
+}
+
+func TestRunSyncRejectsInvalidEmulationPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+
+	mock := storage.NewMockBackend()
+
+	// Seed a manifest so sync would have something to download
+	m := manifest.New()
+	m.Files["roms/snes/Game.sfc"] = manifest.FileEntry{MD5: "abc", Size: 100}
+	manifestData, _ := json.Marshal(m)
+	mock.Objects[storage.ManifestKey] = manifestData
+	mock.Objects["roms/snes/Game.sfc"] = make([]byte, 100)
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Bucket:    "test",
+			KeyID:     "key",
+			SecretKey: "secret",
+		},
+		Sync: config.SyncConfig{
+			EmulationPath: "/nonexistent/emu/path",
+			SyncDirs:      []string{"roms"},
+		},
+	}
+
+	ws := &webServer{
+		groups:   testGroups(),
+		cfg:      cfg,
+		cfgPath:  cfgPath,
+		done:     make(chan struct{}),
+		shutdown: make(chan struct{}),
+		client:   mock,
+	}
+
+	// Trigger sync via handleSync
+	body := `{"selections":{"roms/snes/GameA.sfc":true}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ws.handleSync(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200 (sync accepted), got %d", rec.Code)
+	}
+
+	// Wait for sync goroutine to finish
+	<-ws.syncDone
+
+	ws.syncMu.Lock()
+	result := ws.syncResult
+	ws.syncMu.Unlock()
+
+	if result == nil {
+		t.Fatal("expected sync result")
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("expected validation error in sync result")
+	}
+	if len(result.Downloaded) != 0 {
+		t.Errorf("expected 0 downloads, got %d", len(result.Downloaded))
+	}
+}
+
 // --- systemKey / buildGroups / sub-group tests ---
 
 func TestSystemKey(t *testing.T) {
