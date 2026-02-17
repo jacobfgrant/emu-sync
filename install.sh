@@ -5,10 +5,21 @@ set -e
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash
 #   curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash -s -- <token>
+#   curl -sSL https://raw.githubusercontent.com/jacobfgrant/emu-sync/master/install.sh | bash -s -- --version v0.5.0
 
 REPO="jacobfgrant/emu-sync"
 INSTALL_DIR="$HOME/.local/bin"
-TOKEN="$1"
+TOKEN=""
+VERSION_ARG=""
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version)   VERSION_ARG="$2"; shift 2 ;;
+        --version=*) VERSION_ARG="${1#--version=}"; shift ;;
+        *)           TOKEN="$1"; shift ;;
+    esac
+done
 
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -38,6 +49,14 @@ if [ "$OS" = "linux" ] && [ "$ARCH" = "arm64" ]; then
     exit 1
 fi
 
+# Check for existing Homebrew install
+if command -v brew >/dev/null 2>&1 && \
+   brew list emu-sync >/dev/null 2>&1; then
+    echo "emu-sync is managed by Homebrew." >&2
+    echo "Run: brew upgrade emu-sync" >&2
+    exit 0
+fi
+
 echo "Detected: ${OS}/${ARCH}"
 
 # Track whether this is an upgrade (binary already exists)
@@ -46,8 +65,14 @@ if [ -f "${INSTALL_DIR}/emu-sync" ]; then
     UPGRADE=true
 fi
 
-# Get latest release tag
-LATEST=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+# Determine version: EMU_SYNC_VERSION env > --version flag > GitHub API
+if [ -n "${EMU_SYNC_VERSION:-}" ]; then
+    LATEST="$EMU_SYNC_VERSION"
+elif [ -n "$VERSION_ARG" ]; then
+    LATEST="$VERSION_ARG"
+else
+    LATEST=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+fi
 
 if [ -z "$LATEST" ]; then
     echo "Error: could not determine latest release" >&2
