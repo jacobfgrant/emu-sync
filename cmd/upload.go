@@ -67,15 +67,23 @@ uploads and you just need to update the manifest.`,
 			}
 		}
 
+		// Save a local manifest when uploading from the emulation path
+		// so a subsequent sync knows these files are already present.
+		localManifestPath := ""
+		if source == cfg.Sync.EmulationPath {
+			localManifestPath = config.DefaultLocalManifestPath()
+		}
+
 		result, err := upload.Run(cmd.Context(), client, upload.Options{
-			SourcePath:   source,
-			SyncDirs:     cfg.Sync.SyncDirs,
-			DryRun:       uploadDryRun,
-			Verbose:      verbose,
-			ManifestOnly: uploadManifestOnly,
-			Workers:      workers,
-			MaxRetries:   maxRetries,
-			SkipDotfiles: *cfg.Sync.SkipDotfiles,
+			SourcePath:        source,
+			SyncDirs:          cfg.Sync.SyncDirs,
+			DryRun:            uploadDryRun,
+			Verbose:           verbose,
+			ManifestOnly:      uploadManifestOnly,
+			Workers:           workers,
+			MaxRetries:        maxRetries,
+			SkipDotfiles:      *cfg.Sync.SkipDotfiles,
+			LocalManifestPath: localManifestPath,
 		})
 		if err != nil {
 			return err

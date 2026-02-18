@@ -17,15 +17,16 @@ import (
 
 // Options controls upload behavior.
 type Options struct {
-	SourcePath   string
-	SyncDirs     []string
-	DryRun       bool
-	Verbose      bool
-	ManifestOnly bool
-	Workers      int    // number of parallel uploads; 0 or 1 = sequential
-	MaxRetries   int    // per-file retries with backoff; 0 = no retries
-	SkipDotfiles bool   // skip files and directories starting with "."
-	CachePath    string // overrides default upload cache path; used by tests
+	SourcePath        string
+	SyncDirs          []string
+	DryRun            bool
+	Verbose           bool
+	ManifestOnly      bool
+	Workers           int    // number of parallel uploads; 0 or 1 = sequential
+	MaxRetries        int    // per-file retries with backoff; 0 = no retries
+	SkipDotfiles      bool   // skip files and directories starting with "."
+	CachePath         string // overrides default upload cache path; used by tests
+	LocalManifestPath string // if set, save the manifest locally after successful upload
 }
 
 // Result summarizes what an upload run did.
@@ -85,6 +86,9 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 			}
 			if err := client.UploadManifest(ctx, manifestData); err != nil {
 				return nil, fmt.Errorf("uploading manifest: %w", err)
+			}
+			if err := saveLocalManifest(newManifest, opts); err != nil {
+				return result, err
 			}
 		}
 		return result, nil
@@ -149,9 +153,25 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 		if err := client.UploadManifest(ctx, manifestData); err != nil {
 			return nil, fmt.Errorf("uploading manifest: %w", err)
 		}
+		if err := saveLocalManifest(newManifest, opts); err != nil {
+			return result, err
+		}
 	}
 
 	return result, nil
+}
+
+func saveLocalManifest(m *manifest.Manifest, opts Options) error {
+	if opts.LocalManifestPath == "" {
+		return nil
+	}
+	if opts.Verbose {
+		log.Printf("saving local manifest to %s", opts.LocalManifestPath)
+	}
+	if err := m.SaveJSON(opts.LocalManifestPath); err != nil {
+		return fmt.Errorf("saving local manifest: %w", err)
+	}
+	return nil
 }
 
 // saveCache prunes the cache to only keys in the manifest and writes it to disk.

@@ -522,6 +522,108 @@ func TestUploadManifestOnly(t *testing.T) {
 	}
 }
 
+func TestUploadSavesLocalManifest(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "snes rom data",
+		"bios/scph5501.bin":  "bios data",
+	})
+
+	localManifest := filepath.Join(t.TempDir(), "local-manifest.json")
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath:        source,
+		SyncDirs:          []string{"roms", "bios"},
+		CachePath:         tempCachePath(t),
+		LocalManifestPath: localManifest,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	m, err := manifest.LoadJSON(localManifest)
+	if err != nil {
+		t.Fatalf("loading local manifest: %v", err)
+	}
+	if len(m.Files) != 2 {
+		t.Errorf("local manifest has %d files, want 2", len(m.Files))
+	}
+	if _, ok := m.Files["roms/snes/Game.sfc"]; !ok {
+		t.Error("expected roms/snes/Game.sfc in local manifest")
+	}
+}
+
+func TestUploadNoLocalManifestWithoutPath(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "data",
+	})
+
+	localManifest := filepath.Join(t.TempDir(), "local-manifest.json")
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+		// LocalManifestPath not set
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := os.Stat(localManifest); !os.IsNotExist(err) {
+		t.Error("local manifest should not be created when LocalManifestPath is empty")
+	}
+}
+
+func TestUploadDryRunSkipsLocalManifest(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "data",
+	})
+
+	localManifest := filepath.Join(t.TempDir(), "local-manifest.json")
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath:        source,
+		SyncDirs:          []string{"roms"},
+		DryRun:            true,
+		CachePath:         tempCachePath(t),
+		LocalManifestPath: localManifest,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := os.Stat(localManifest); !os.IsNotExist(err) {
+		t.Error("local manifest should not be created during dry run")
+	}
+}
+
+func TestUploadManifestOnlySavesLocalManifest(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "data",
+	})
+
+	localManifest := filepath.Join(t.TempDir(), "local-manifest.json")
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath:        source,
+		SyncDirs:          []string{"roms"},
+		ManifestOnly:      true,
+		CachePath:         tempCachePath(t),
+		LocalManifestPath: localManifest,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	m, err := manifest.LoadJSON(localManifest)
+	if err != nil {
+		t.Fatalf("loading local manifest: %v", err)
+	}
+	if len(m.Files) != 1 {
+		t.Errorf("local manifest has %d files, want 1", len(m.Files))
+	}
+}
+
 func TestUploadRejectsMissingSourcePath(t *testing.T) {
 	mock := storage.NewMockBackend()
 	_, err := Run(context.Background(), mock, Options{
