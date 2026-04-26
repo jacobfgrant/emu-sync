@@ -470,15 +470,16 @@ func drillInto(reader *bufio.Reader, g *systemGroup) {
 		for i, item := range items {
 			if item.isSubGroup {
 				sg := sgs[item.sgIdx]
+				state := sg.groupState()
 				marker := "[ ]"
-				switch sg.groupState() {
+				switch state {
 				case "all":
 					marker = "[x]"
 				case "partial":
 					marker = "[~]"
 				}
 				extra := ""
-				if sg.groupState() == "partial" {
+				if state == "partial" {
 					extra = fmt.Sprintf("  (%d of %d)", sg.selectedCount(), len(sg.Files))
 				}
 				fmt.Printf("  %2d. %s %-35s %4d files  %8s%s\n",
@@ -597,46 +598,11 @@ func drillIntoFilesPtrs(reader *bufio.Reader, label string, files []*fileInfo) {
 
 // drillIntoFiles shows individual files and lets the user toggle them.
 func drillIntoFiles(reader *bufio.Reader, label string, files []fileInfo) {
-	for {
-		fmt.Printf("\n%s (%d files):\n", label, len(files))
-		for i, f := range files {
-			marker := "[ ]"
-			if f.Selected {
-				marker = "[x]"
-			}
-			fmt.Printf("  %2d. %s %-45s %8s\n", i+1, marker, f.Name, formatSize(f.Size))
-		}
-
-		fmt.Println()
-		fmt.Print("Toggle (e.g., 1 3 5), 'all', 'none', or Enter to go back: ")
-		input := prompt(reader, "")
-		if input == "" {
-			return
-		}
-
-		lower := strings.ToLower(strings.TrimSpace(input))
-		if lower == "all" {
-			for i := range files {
-				files[i].Selected = true
-			}
-			continue
-		}
-		if lower == "none" {
-			for i := range files {
-				files[i].Selected = false
-			}
-			continue
-		}
-
-		for _, tok := range strings.Fields(input) {
-			idx, err := strconv.Atoi(tok)
-			if err != nil || idx < 1 || idx > len(files) {
-				fmt.Printf("  invalid: %s\n", tok)
-				continue
-			}
-			files[idx-1].Selected = !files[idx-1].Selected
-		}
+	ptrs := make([]*fileInfo, len(files))
+	for i := range files {
+		ptrs[i] = &files[i]
 	}
+	drillIntoFilesPtrs(reader, label, ptrs)
 }
 
 func formatSize(bytes int64) string {
