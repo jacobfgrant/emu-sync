@@ -341,9 +341,7 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 		// configured dir name, not the resolved path.
 		root, err := filepath.EvalSymlinks(filepath.Join(sourcePath, filepath.FromSlash(dirKey)))
 		if errors.Is(err, fs.ErrNotExist) {
-			if verbose {
-				log.Printf("skipping %s: directory does not exist", dir)
-			}
+			log.Printf("warning: skipping sync dir %s: does not exist", dir)
 			scan.unscanned = append(scan.unscanned, skippedPath{dirKey, "does not exist"})
 			continue
 		}
