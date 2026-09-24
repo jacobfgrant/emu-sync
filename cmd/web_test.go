@@ -362,9 +362,12 @@ func TestHandleSaveMultipleTimes(t *testing.T) {
 		t.Fatalf("second save: expected 200, got %d", rec2.Code)
 	}
 
-	data2, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(data2), "roms/gba") {
-		t.Error("second save: expected roms/gba in config")
+	saved, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("loading saved config: %v", err)
+	}
+	if !saved.ShouldSync("roms/gba/GameC.gba") {
+		t.Errorf("second save: gba should be selected, got sync_dirs=%v exclude=%v", saved.Sync.SyncDirs, saved.Sync.SyncExclude)
 	}
 
 	// done channel should still be open
@@ -501,9 +504,10 @@ func TestEncodeSelectionsAll(t *testing.T) {
 		},
 	}
 
+	// Fully selected: save the top-level dir so new systems sync too
 	dirs, exclude := encodeSelections(groups)
-	if len(dirs) != 1 || dirs[0] != "roms/snes" {
-		t.Errorf("expected [roms/snes], got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "roms" {
+		t.Errorf("expected [roms], got %v", dirs)
 	}
 	if len(exclude) != 0 {
 		t.Errorf("expected no excludes, got %v", exclude)
@@ -521,12 +525,14 @@ func TestEncodeSelectionsNone(t *testing.T) {
 		},
 	}
 
+	// An empty sync_dirs would load back as the default, so "nothing"
+	// is saved as the top-level dirs, all excluded.
 	dirs, exclude := encodeSelections(groups)
-	if len(dirs) != 0 {
-		t.Errorf("expected no dirs, got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "roms" {
+		t.Errorf("expected [roms], got %v", dirs)
 	}
-	if len(exclude) != 0 {
-		t.Errorf("expected no excludes, got %v", exclude)
+	if len(exclude) != 1 || exclude[0] != "roms" {
+		t.Errorf("expected [roms], got %v", exclude)
 	}
 }
 
@@ -542,9 +548,10 @@ func TestEncodeSelectionsPartialFewerExcludes(t *testing.T) {
 		},
 	}
 
+	// roms + exclude C ties with snes + exclude C; ties include the parent
 	dirs, exclude := encodeSelections(groups)
-	if len(dirs) != 1 || dirs[0] != "roms/snes" {
-		t.Errorf("expected [roms/snes], got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "roms" {
+		t.Errorf("expected [roms], got %v", dirs)
 	}
 	if len(exclude) != 1 || exclude[0] != "roms/snes/C.sfc" {
 		t.Errorf("expected [roms/snes/C.sfc], got %v", exclude)
@@ -811,12 +818,12 @@ func TestHandleSyncAutoSavesConfig(t *testing.T) {
 	}
 
 	// Config should have been written
-	data, err := os.ReadFile(ws.cfgPath)
+	saved, err := config.Load(ws.cfgPath)
 	if err != nil {
 		t.Fatalf("config not written: %v", err)
 	}
-	if !strings.Contains(string(data), "roms/snes") {
-		t.Error("expected roms/snes in config after auto-save")
+	if !saved.ShouldSync("roms/snes/GameA.sfc") {
+		t.Errorf("expected GameA selected after auto-save, got sync_dirs=%v", saved.Sync.SyncDirs)
 	}
 
 	<-ws.syncDone // clean up
@@ -1364,18 +1371,11 @@ func TestEncodeSelectionsSubGroups(t *testing.T) {
 
 	dirs, exclude := encodeSelections(groups)
 
-	// Should encode as: bios/pcsx2 dir + exclude textures subdir
-	// Encoding A: bios/pcsx2 + exclude bios/pcsx2/textures (2 entries)
+	// Encoding A: bios + exclude bios/pcsx2/textures (2 entries)
 	// Encoding B: bios/pcsx2/file.bin + bios/pcsx2/resources (2 entries)
 	// A ties with B, A wins (<=)
-	found := false
-	for _, d := range dirs {
-		if d == "bios/pcsx2" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected bios/pcsx2 in sync_dirs, got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "bios" {
+		t.Errorf("expected [bios], got %v", dirs)
 	}
 	foundExclude := false
 	for _, e := range exclude {
@@ -1430,11 +1430,11 @@ func TestEncodeSelectionsPicksShorter(t *testing.T) {
 
 	dirs, exclude := encodeSelections(groups)
 
-	// Encoding A: bios/pcsx2 + exclude bios/pcsx2/delta (2 entries)
+	// Encoding A: bios + exclude bios/pcsx2/delta (2 entries)
 	// Encoding B: bios/pcsx2/alpha + bios/pcsx2/beta + bios/pcsx2/gamma (3 entries)
 	// A wins
-	if len(dirs) != 1 || dirs[0] != "bios/pcsx2" {
-		t.Errorf("expected [bios/pcsx2], got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "bios" {
+		t.Errorf("expected [bios], got %v", dirs)
 	}
 	if len(exclude) != 1 || exclude[0] != "bios/pcsx2/delta" {
 		t.Errorf("expected [bios/pcsx2/delta], got %v", exclude)
@@ -1442,7 +1442,7 @@ func TestEncodeSelectionsPicksShorter(t *testing.T) {
 }
 
 func TestEncodeSelectionsNoSubGroups(t *testing.T) {
-	// Files all in system root — no sub-groups, uses flat encoding
+	// Files all in system root
 	groups := []*systemGroup{
 		{
 			Dir: "roms/snes",
@@ -1455,8 +1455,8 @@ func TestEncodeSelectionsNoSubGroups(t *testing.T) {
 	}
 
 	dirs, exclude := encodeSelections(groups)
-	if len(dirs) != 1 || dirs[0] != "roms/snes" {
-		t.Errorf("expected [roms/snes], got %v", dirs)
+	if len(dirs) != 1 || dirs[0] != "roms" {
+		t.Errorf("expected [roms], got %v", dirs)
 	}
 	if len(exclude) != 1 || exclude[0] != "roms/snes/C.sfc" {
 		t.Errorf("expected [roms/snes/C.sfc], got %v", exclude)
