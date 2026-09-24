@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1504,4 +1505,31 @@ func TestComputeSyncStatusCountsSavedDeselection(t *testing.T) {
 	if status := ws.computeSyncStatus(); status.Removed != 0 {
 		t.Errorf("Removed with delete off = %d, want 0", status.Removed)
 	}
+}
+
+func TestSaveAndBrowseDuringSync(t *testing.T) {
+	// Run with -race: saves and page loads must not race the running sync.
+	ws, _ := setupSyncWebServer(t)
+
+	rec := httptest.NewRecorder()
+	ws.handleSync(rec, httptest.NewRequest("POST", "/api/sync", strings.NewReader(`{"selections":{"roms/snes/GameA.sfc":true}}`)))
+	if rec.Code != 200 {
+		t.Fatalf("starting sync: got %d", rec.Code)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			body := fmt.Sprintf(`{"selections":{"roms/snes/GameA.sfc":%v},"delete":%v}`, i%2 == 0, i%2 == 1)
+			ws.handleSave(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/save", strings.NewReader(body)))
+		}(i)
+		go func() {
+			defer wg.Done()
+			ws.handleSystems(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/systems", nil))
+		}()
+	}
+	wg.Wait()
+	<-ws.syncDone
 }

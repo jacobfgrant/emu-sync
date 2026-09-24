@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,6 +77,7 @@ func (el *eventLog) read(from int) ([]string, bool) {
 }
 
 type webServer struct {
+	stateMu           sync.Mutex // guards groups and cfg; take after syncMu if holding both
 	groups            []*systemGroup
 	cfg               *config.Config
 	cfgPath           string
@@ -197,6 +199,9 @@ func (ws *webServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
+	ws.stateMu.Lock()
+	defer ws.stateMu.Unlock()
+
 	var totalSize, selectedSize int64
 	sysList := make([]systemJSON, 0, len(ws.groups))
 
@@ -243,7 +248,7 @@ func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
 }
 
 // computeSyncStatus reports what the next sync would change under the
-// saved config, using the same plan as sync itself.
+// saved config, using the same plan as sync itself. Caller must hold stateMu.
 func (ws *webServer) computeSyncStatus() *syncStatusJSON {
 	localPath := ws.localManifestPath
 	if localPath == "" {
@@ -282,12 +287,15 @@ func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ws.stateMu.Lock()
 	ws.applySelections(req.Selections)
 	if req.Delete != nil {
 		ws.cfg.Sync.Delete = *req.Delete
 	}
+	err := config.Write(ws.cfg, ws.cfgPath)
+	ws.stateMu.Unlock()
 
-	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
+	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(saveResponse{Error: err.Error()})
@@ -321,6 +329,8 @@ func (ws *webServer) handleWait(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// applySelections updates groups and the config's sync lists. Caller must
+// hold stateMu.
 func (ws *webServer) applySelections(selections map[string]bool) {
 	for _, g := range ws.groups {
 		for i := range g.Files {
@@ -334,25 +344,36 @@ func (ws *webServer) applySelections(selections map[string]bool) {
 	ws.cfg.Sync.SyncExclude = syncExclude
 }
 
-func (ws *webServer) runSync() {
+// configSnapshot returns a copy of the config that later saves won't
+// modify. Caller must hold stateMu.
+func (ws *webServer) configSnapshot() *config.Config {
+	snapshot := *ws.cfg
+	snapshot.Sync.SyncDirs = slices.Clone(ws.cfg.Sync.SyncDirs)
+	snapshot.Sync.SyncExclude = slices.Clone(ws.cfg.Sync.SyncExclude)
+	return &snapshot
+}
+
+// runSync runs a sync with cfg, a snapshot taken when the sync started, so
+// selections saved while it runs don't change what it does.
+func (ws *webServer) runSync(cfg *config.Config) {
 	log := ws.syncLog
 	defer func() {
 		log.finish()
 		close(ws.syncDone)
 	}()
 
-	if err := ws.cfg.ValidateEmulationPath(); err != nil {
+	if err := cfg.ValidateEmulationPath(); err != nil {
 		ws.syncMu.Lock()
 		ws.syncResult = &intsync.Result{Errors: []error{err}}
 		ws.syncMu.Unlock()
 		return
 	}
 
-	workers := ws.cfg.Sync.Workers
+	workers := cfg.Sync.Workers
 	if workers == 0 {
 		workers = 1
 	}
-	maxRetries := ws.cfg.Sync.MaxRetries
+	maxRetries := cfg.Sync.MaxRetries
 	if maxRetries == 0 {
 		maxRetries = 3
 	}
@@ -363,14 +384,14 @@ func (ws *webServer) runSync() {
 		Progress:   progress.NewReporterWriter(log),
 	}
 
-	if ws.cfg.Sync.SaveThreshold != "" {
-		bytes, err := config.ParseBandwidthLimit(ws.cfg.Sync.SaveThreshold)
+	if cfg.Sync.SaveThreshold != "" {
+		bytes, err := config.ParseBandwidthLimit(cfg.Sync.SaveThreshold)
 		if err == nil && bytes > 0 {
 			opts.SaveThreshold = bytes
 		}
 	}
 
-	result, err := intsync.Run(context.Background(), ws.client, ws.cfg, opts)
+	result, err := intsync.Run(context.Background(), ws.client, cfg, opts)
 
 	ws.syncMu.Lock()
 	if result != nil {
@@ -413,11 +434,15 @@ func (ws *webServer) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ws.stateMu.Lock()
 	ws.applySelections(req.Selections)
 	if req.Delete != nil {
 		ws.cfg.Sync.Delete = *req.Delete
 	}
-	if err := config.Write(ws.cfg, ws.cfgPath); err != nil {
+	err := config.Write(ws.cfg, ws.cfgPath)
+	cfg := ws.configSnapshot()
+	ws.stateMu.Unlock()
+	if err != nil {
 		ws.syncMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -430,7 +455,7 @@ func (ws *webServer) handleSync(w http.ResponseWriter, r *http.Request) {
 	ws.syncResult = nil
 	ws.syncMu.Unlock()
 
-	go ws.runSync()
+	go ws.runSync(cfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -544,14 +569,18 @@ func (ws *webServer) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ws.cfg.ValidateEmulationPath(); err != nil {
+	ws.stateMu.Lock()
+	cfg := ws.configSnapshot()
+	ws.stateMu.Unlock()
+
+	if err := cfg.ValidateEmulationPath(); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
 		return
 	}
 
-	result, err := intsync.Verify(ws.cfg, ws.localManifestPath, false)
+	result, err := intsync.Verify(cfg, ws.localManifestPath, false)
 	resp := map[string]interface{}{}
 	if err != nil {
 		resp["error"] = err.Error()
