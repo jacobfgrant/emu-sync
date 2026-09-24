@@ -946,17 +946,24 @@ main {
     document.getElementById("verify-btn").disabled = true;
   }
 
-  // Resolves true if the save or sync wouldn't delete anything, or if the
-  // user confirms the deletions. lead is the start of the question, e.g.
-  // "This sync will".
-  function confirmDeletions(lead) {
-    var del = document.getElementById("delete-toggle").checked;
-    if (!del) return Promise.resolve(true);
+  // Captures the current selections and delete toggle once, so the request
+  // that is sent matches the one the user confirmed.
+  function buildRequest() {
+    return {
+      selections: buildSelections(),
+      delete: document.getElementById("delete-toggle").checked
+    };
+  }
+
+  // Resolves true if req wouldn't delete anything, or if the user confirms
+  // the deletions. lead is the start of the question, e.g. "This sync will".
+  function confirmDeletions(lead, req) {
+    if (!req.delete) return Promise.resolve(true);
 
     return api("/api/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selections: buildSelections(), delete: del })
+      body: JSON.stringify(req)
     })
     .then(function(res) { return res.json(); })
     .then(function(preview) {
@@ -984,7 +991,8 @@ main {
     msg.textContent = "Saving...";
     msg.className = "status-msg";
 
-    confirmDeletions("The next sync will")
+    var req = buildRequest();
+    confirmDeletions("The next sync will", req)
     .then(function(ok) {
       if (!ok) {
         saving = false;
@@ -992,7 +1000,7 @@ main {
         enableButtons();
         return;
       }
-      return saveSelections(exit, msg);
+      return saveSelections(req, exit, msg);
     })
     .catch(function(err) {
       saving = false;
@@ -1002,11 +1010,11 @@ main {
     });
   }
 
-  function saveSelections(exit, msg) {
+  function saveSelections(req, exit, msg) {
     return api("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selections: buildSelections(), exit: exit, delete: document.getElementById("delete-toggle").checked })
+      body: JSON.stringify({ selections: req.selections, exit: exit, delete: req.delete })
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
@@ -1199,14 +1207,15 @@ main {
     document.getElementById("sync-btn").disabled = true;
     document.getElementById("verify-btn").disabled = true;
 
-    confirmDeletions("This sync will")
+    var req = buildRequest();
+    confirmDeletions("This sync will", req)
     .then(function(ok) {
       if (!ok) {
         syncing = false;
         enableButtons();
         return;
       }
-      startSync();
+      startSync(req);
     })
     .catch(function(err) {
       syncing = false;
@@ -1217,7 +1226,7 @@ main {
     });
   }
 
-  function startSync() {
+  function startSync(req) {
     var msg = document.getElementById("status-msg");
     document.getElementById("sync-btn").disabled = true;
     document.getElementById("verify-btn").disabled = true;
@@ -1231,7 +1240,7 @@ main {
     api("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selections: buildSelections(), delete: document.getElementById("delete-toggle").checked })
+      body: JSON.stringify(req)
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
