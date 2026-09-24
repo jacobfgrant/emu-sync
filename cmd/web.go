@@ -139,6 +139,19 @@ type saveRequest struct {
 	Delete     *bool           `json:"delete,omitempty"`
 }
 
+// previewResponse describes the deletions the next sync would make under
+// the selections in a preview request.
+type previewResponse struct {
+	DeleteCount         int      `json:"deleteCount"`
+	DeleteSize          int64    `json:"deleteSize"`
+	DeleteSizeFormatted string   `json:"deleteSizeFormatted"`
+	DeleteFiles         []string `json:"deleteFiles"` // first previewFileLimit keys
+	Error               string   `json:"error,omitempty"`
+}
+
+// previewFileLimit caps how many file names a preview lists.
+const previewFileLimit = 10
+
 type saveResponse struct {
 	OK         bool   `json:"ok"`
 	ConfigPath string `json:"configPath,omitempty"`
@@ -157,6 +170,7 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
 	mux.HandleFunc("/api/sync/status", ws.handleSyncStatus)
 	mux.HandleFunc("/api/verify", ws.handleVerify)
+	mux.HandleFunc("/api/preview", ws.handlePreview)
 	return ws.guard(mux)
 }
 
@@ -259,16 +273,7 @@ func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
 // computeSyncStatus reports what the next sync would change under the
 // saved config, using the same plan as sync itself. Caller must hold stateMu.
 func (ws *webServer) computeSyncStatus() *syncStatusJSON {
-	localPath := ws.localManifestPath
-	if localPath == "" {
-		localPath = config.DefaultLocalManifestPath()
-	}
-	local, err := manifest.LoadJSON(localPath)
-	if err != nil {
-		local = manifest.New()
-	}
-
-	plan := intsync.NewPlan(ws.remoteManifest, local, ws.cfg)
+	plan := intsync.NewPlan(ws.remoteManifest, ws.loadLocalManifest(), ws.cfg)
 	status := &syncStatusJSON{
 		New:       len(plan.Added),
 		Updated:   len(plan.Modified),
@@ -279,6 +284,64 @@ func (ws *webServer) computeSyncStatus() *syncStatusJSON {
 		status.Removed = len(plan.Deleted)
 	}
 	return status
+}
+
+// loadLocalManifest returns the local manifest, or an empty one if there
+// is none yet.
+func (ws *webServer) loadLocalManifest() *manifest.Manifest {
+	localPath := ws.localManifestPath
+	if localPath == "" {
+		localPath = config.DefaultLocalManifestPath()
+	}
+	local, err := manifest.LoadJSON(localPath)
+	if err != nil {
+		return manifest.New()
+	}
+	return local
+}
+
+// handlePreview reports what the next sync would delete if the posted
+// selections and delete setting were saved, without saving them. The page
+// uses it to confirm before a save or sync that deletes files.
+func (ws *webServer) handlePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req saveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(previewResponse{Error: "invalid request body"})
+		return
+	}
+
+	ws.stateMu.Lock()
+	cfg := ws.configSnapshot()
+	cfg.Sync.SyncDirs, cfg.Sync.SyncExclude = encodeSelections(withSelections(ws.groups, req.Selections))
+	if req.Delete != nil {
+		cfg.Sync.Delete = *req.Delete
+	}
+	ws.stateMu.Unlock()
+
+	resp := previewResponse{DeleteFiles: []string{}}
+	if cfg.Sync.Delete && ws.remoteManifest != nil {
+		local := ws.loadLocalManifest()
+		plan := intsync.NewPlan(ws.remoteManifest, local, cfg)
+		resp.DeleteCount = len(plan.Deleted)
+		for i, key := range plan.Deleted {
+			resp.DeleteSize += local.Files[key].Size
+			if i < previewFileLimit {
+				resp.DeleteFiles = append(resp.DeleteFiles, key)
+			}
+		}
+	}
+	resp.DeleteSizeFormatted = formatSize(resp.DeleteSize)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
@@ -338,16 +401,27 @@ func (ws *webServer) handleWait(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// withSelections returns a copy of groups with the given per-key
+// selections applied. Keys not in selections keep their current state.
+func withSelections(groups []*systemGroup, selections map[string]bool) []*systemGroup {
+	updated := make([]*systemGroup, len(groups))
+	for gi, g := range groups {
+		copied := *g
+		copied.Files = slices.Clone(g.Files)
+		for i := range copied.Files {
+			if sel, ok := selections[copied.Files[i].Key]; ok {
+				copied.Files[i].Selected = sel
+			}
+		}
+		updated[gi] = &copied
+	}
+	return updated
+}
+
 // applySelections updates groups and the config's sync lists. Caller must
 // hold stateMu.
 func (ws *webServer) applySelections(selections map[string]bool) {
-	for _, g := range ws.groups {
-		for i := range g.Files {
-			if sel, ok := selections[g.Files[i].Key]; ok {
-				g.Files[i].Selected = sel
-			}
-		}
-	}
+	ws.groups = withSelections(ws.groups, selections)
 	syncDirs, syncExclude := encodeSelections(ws.groups)
 	ws.cfg.Sync.SyncDirs = syncDirs
 	ws.cfg.Sync.SyncExclude = syncExclude

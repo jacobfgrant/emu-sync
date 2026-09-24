@@ -946,6 +946,36 @@ main {
     document.getElementById("verify-btn").disabled = true;
   }
 
+  // Resolves true if the save or sync wouldn't delete anything, or if the
+  // user confirms the deletions. lead is the start of the question, e.g.
+  // "This sync will".
+  function confirmDeletions(lead) {
+    var del = document.getElementById("delete-toggle").checked;
+    if (!del) return Promise.resolve(true);
+
+    return api("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selections: buildSelections(), delete: del })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(preview) {
+      if (preview.error) throw new Error(preview.error);
+      if (!preview.deleteCount) return true;
+
+      var noun = preview.deleteCount === 1 ? "file" : "files";
+      var lines = [lead + " delete " + preview.deleteCount + " " + noun +
+        " (" + preview.deleteSizeFormatted + ") from this device:", ""];
+      for (var i = 0; i < preview.deleteFiles.length; i++) {
+        lines.push("  " + preview.deleteFiles[i]);
+      }
+      var more = preview.deleteCount - preview.deleteFiles.length;
+      if (more > 0) lines.push("  ...and " + more + " more");
+      lines.push("", "Continue?");
+      return confirm(lines.join("\n"));
+    });
+  }
+
   function doSave(exit) {
     if (saving) return;
     saving = true;
@@ -954,7 +984,26 @@ main {
     msg.textContent = "Saving...";
     msg.className = "status-msg";
 
-    api("/api/save", {
+    confirmDeletions("The next sync will")
+    .then(function(ok) {
+      if (!ok) {
+        saving = false;
+        msg.textContent = "Not saved.";
+        enableButtons();
+        return;
+      }
+      return saveSelections(exit, msg);
+    })
+    .catch(function(err) {
+      saving = false;
+      msg.textContent = "Error: " + err.message;
+      msg.className = "status-msg error";
+      enableButtons();
+    });
+  }
+
+  function saveSelections(exit, msg) {
+    return api("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections: buildSelections(), exit: exit, delete: document.getElementById("delete-toggle").checked })
@@ -1147,6 +1196,28 @@ main {
   function doSync() {
     if (syncing || verifying) return;
     syncing = true;
+    document.getElementById("sync-btn").disabled = true;
+    document.getElementById("verify-btn").disabled = true;
+
+    confirmDeletions("This sync will")
+    .then(function(ok) {
+      if (!ok) {
+        syncing = false;
+        enableButtons();
+        return;
+      }
+      startSync();
+    })
+    .catch(function(err) {
+      syncing = false;
+      enableButtons();
+      var msg = document.getElementById("status-msg");
+      msg.textContent = "Error: " + err.message;
+      msg.className = "status-msg error";
+    });
+  }
+
+  function startSync() {
     var msg = document.getElementById("status-msg");
     document.getElementById("sync-btn").disabled = true;
     document.getElementById("verify-btn").disabled = true;

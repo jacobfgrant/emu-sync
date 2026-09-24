@@ -42,6 +42,7 @@ func TestGuardRejectsAPIWithoutToken(t *testing.T) {
 		{"POST", "/api/sync"},
 		{"POST", "/api/exit"},
 		{"POST", "/api/verify"},
+		{"POST", "/api/preview"},
 		{"GET", "/api/sync/status"},
 		{"GET", "/api/sync/events"},
 		{"GET", "/api/wait"},
