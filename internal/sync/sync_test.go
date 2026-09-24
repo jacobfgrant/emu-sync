@@ -632,6 +632,32 @@ func TestSyncFiltersBySyncExclude(t *testing.T) {
 
 // --- helpers ---
 
+func TestSyncRejectsTraversalKeys(t *testing.T) {
+	root := t.TempDir()
+	emuDir := filepath.Join(root, "emu")
+	if err := os.MkdirAll(emuDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(t.TempDir(), "local-manifest.json")
+
+	mock := mockWithManifest(t, map[string]mockFile{
+		"roms/snes/Game.sfc":  {content: "data", size: 4},
+		"roms/../../evil.txt": {content: "pwned", size: 5},
+	})
+
+	cfg := testConfig(emuDir)
+	if _, err := Run(context.Background(), mock, cfg, Options{LocalManifestPath: manifestPath}); err == nil {
+		t.Fatal("expected error for manifest with traversal key, got nil")
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "evil.txt")); !os.IsNotExist(err) {
+		t.Errorf("file written outside emulation path (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(emuDir, "roms/snes/Game.sfc")); !os.IsNotExist(err) {
+		t.Errorf("sync should not download anything from an invalid manifest (stat err = %v)", err)
+	}
+}
+
 type mockFile struct {
 	content string
 	size    int64

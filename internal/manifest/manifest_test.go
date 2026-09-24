@@ -232,3 +232,54 @@ func TestToJSON(t *testing.T) {
 		t.Errorf("round-trip got %d files, want 1", len(roundtrip.Files))
 	}
 }
+
+func TestValidateKey(t *testing.T) {
+	valid := []string{
+		"roms/snes/Game.sfc",
+		"bios/scph5501.bin",
+		"roms/snes/..hidden.sfc",
+		"roms/snes/Game (USA) [!].sfc",
+		`roms/odd\name.bin`,
+	}
+	for _, key := range valid {
+		if err := ValidateKey(key); err != nil {
+			t.Errorf("ValidateKey(%q) = %v, want nil", key, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"/etc/passwd",
+		"roms/../../.bashrc",
+		"../outside.txt",
+		"roms/..",
+		"roms/./snes/Game.sfc",
+		"roms//snes/Game.sfc",
+		"roms/snes/",
+	}
+	for _, key := range invalid {
+		if err := ValidateKey(key); err == nil {
+			t.Errorf("ValidateKey(%q) = nil, want error", key)
+		}
+	}
+}
+
+func TestParseJSONRejectsTraversalKey(t *testing.T) {
+	data := []byte(`{"version":1,"files":{"roms/ok.rom":{"size":1,"md5":"a"},"roms/../../evil.txt":{"size":1,"md5":"b"}}}`)
+
+	if _, err := ParseJSON(data); err == nil {
+		t.Fatal("expected error for traversal key, got nil")
+	}
+}
+
+func TestLoadJSONRejectsTraversalKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	data := []byte(`{"version":1,"files":{"/etc/passwd":{"size":1,"md5":"a"}}}`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadJSON(path); err == nil {
+		t.Fatal("expected error for absolute key, got nil")
+	}
+}

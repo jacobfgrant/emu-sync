@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,20 +46,12 @@ func LoadJSON(path string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading manifest: %w", err)
 	}
-
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing manifest: %w", err)
-	}
-
-	if m.Files == nil {
-		m.Files = make(map[string]FileEntry)
-	}
-
-	return &m, nil
+	return ParseJSON(data)
 }
 
-// ParseJSON parses a manifest from raw JSON bytes.
+// ParseJSON parses a manifest from raw JSON bytes. It rejects the whole
+// manifest if any key is not a safe relative path, since keys become
+// filesystem paths under the emulation directory.
 func ParseJSON(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -69,7 +62,30 @@ func ParseJSON(data []byte) (*Manifest, error) {
 		m.Files = make(map[string]FileEntry)
 	}
 
+	for key := range m.Files {
+		if err := ValidateKey(key); err != nil {
+			return nil, fmt.Errorf("parsing manifest: %w", err)
+		}
+	}
+
 	return &m, nil
+}
+
+// ValidateKey checks that a manifest key is a clean relative path that
+// cannot escape the directory it is joined to.
+func ValidateKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("empty file key")
+	}
+	if strings.HasPrefix(key, "/") {
+		return fmt.Errorf("absolute file key %q", key)
+	}
+	for _, segment := range strings.Split(key, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("unsafe file key %q", key)
+		}
+	}
+	return nil
 }
 
 // SaveJSON writes the manifest to a JSON file on disk.
