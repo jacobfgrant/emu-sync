@@ -706,3 +706,212 @@ func TestUploadAbortsWhenManifestFetchFails(t *testing.T) {
 		}
 	}
 }
+
+// assertNoBucketWrites fails if any upload or delete call was made.
+func assertNoBucketWrites(t *testing.T, mock *storage.MockBackend) {
+	t.Helper()
+	for _, call := range mock.Calls {
+		if strings.HasPrefix(call, "Upload") || strings.HasPrefix(call, "DeleteObject:") {
+			t.Errorf("unexpected bucket write: %s", call)
+		}
+	}
+}
+
+func TestUploadAbortsOnUnreadableFile(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/gba/Locked.gba": "locked",
+		"roms/snes/Game.sfc":  "snes",
+	})
+	mock := storage.NewMockBackend()
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Touch the file so the cache misses and it must be re-read.
+	locked := filepath.Join(source, "roms/gba/Locked.gba")
+	if err := os.WriteFile(locked, []byte("locked v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o644) })
+
+	mock.Calls = nil
+	if _, err := Run(context.Background(), mock, opts); err == nil {
+		t.Fatal("expected error for unreadable file, got nil")
+	}
+	assertNoBucketWrites(t, mock)
+	if len(verifyManifest(t, mock).Files) != 2 {
+		t.Error("remote manifest should still list both files")
+	}
+}
+
+func TestUploadRefusesWhenSyncDirMissing(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "snes",
+		"bios/scph5501.bin":  "bios",
+	})
+	mock := storage.NewMockBackend()
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms", "bios"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Simulate an unmounted drive
+	if err := os.RemoveAll(filepath.Join(source, "bios")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, manifestOnly := range []bool{false, true} {
+		mock.Calls = nil
+		opts.ManifestOnly = manifestOnly
+		_, err := Run(context.Background(), mock, opts)
+		if err == nil {
+			t.Fatalf("ManifestOnly=%v: expected error for missing sync dir with remote files, got nil", manifestOnly)
+		}
+		if !strings.Contains(err.Error(), "bios") {
+			t.Errorf("error should name the missing dir: %v", err)
+		}
+		assertNoBucketWrites(t, mock)
+	}
+	if _, ok := mock.Objects["bios/scph5501.bin"]; !ok {
+		t.Error("bios file should still be in the bucket")
+	}
+}
+
+func TestUploadRemovedSyncDirDeletesIntentionally(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "snes",
+		"bios/scph5501.bin":  "bios",
+	})
+	mock := storage.NewMockBackend()
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms", "bios"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Dropping bios from sync_dirs is an explicit choice to stop publishing it.
+	opts.SyncDirs = []string{"roms"}
+	result, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(result.Deleted) != 1 || result.Deleted[0] != "bios/scph5501.bin" {
+		t.Errorf("deleted = %v, want [bios/scph5501.bin]", result.Deleted)
+	}
+}
+
+func TestUploadFollowsSymlinkedSyncDir(t *testing.T) {
+	storageDir := setupSourceDir(t, map[string]string{
+		"snes/Game.sfc": "snes",
+	})
+	source := t.TempDir()
+	if err := os.Symlink(storageDir, filepath.Join(source, "roms")); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := storage.NewMockBackend()
+	result, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Uploaded) != 1 {
+		t.Errorf("uploaded %d, want 1", len(result.Uploaded))
+	}
+	if _, ok := verifyManifest(t, mock).Files["roms/snes/Game.sfc"]; !ok {
+		t.Error("manifest should key files by the configured dir name")
+	}
+}
+
+func TestUploadSkipsNestedDirSymlink(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/genesis/Game.md": "genesis",
+		"roms/zz/Late.rom":     "sorts after the symlink",
+	})
+	if err := os.Symlink("genesis", filepath.Join(source, "roms/megadrive")); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := storage.NewMockBackend()
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	m := verifyManifest(t, mock)
+	if len(m.Files) != 2 {
+		t.Errorf("manifest has %d files, want 2: %v", len(m.Files), m.Files)
+	}
+	for key := range m.Files {
+		if strings.HasPrefix(key, "roms/megadrive/") {
+			t.Errorf("directory symlink contents should be skipped: %s", key)
+		}
+	}
+}
+
+func TestUploadRefusesWhenDirReplacedBySymlink(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/psx/Game.bin": "psx",
+	})
+	mock := storage.NewMockBackend()
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Move psx to another disk and leave a symlink behind
+	elsewhere := t.TempDir()
+	if err := os.Rename(filepath.Join(source, "roms/psx"), filepath.Join(elsewhere, "psx")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "psx"), filepath.Join(source, "roms/psx")); err != nil {
+		t.Fatal(err)
+	}
+
+	mock.Calls = nil
+	if _, err := Run(context.Background(), mock, opts); err == nil {
+		t.Fatal("expected error when a symlinked dir hides files already in the bucket")
+	}
+	assertNoBucketWrites(t, mock)
+}
+
+func TestUploadFileSymlinkUsesTargetSize(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Real.sfc": "ten bytes!",
+	})
+	target := filepath.Join(source, "roms/snes/Real.sfc")
+	if err := os.Symlink(target, filepath.Join(source, "roms/snes/Link.sfc")); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := storage.NewMockBackend()
+	if _, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entry, ok := verifyManifest(t, mock).Files["roms/snes/Link.sfc"]
+	if !ok {
+		t.Fatal("file symlink should be uploaded")
+	}
+	if entry.Size != 10 {
+		t.Errorf("size = %d, want 10 (target size, not link size)", entry.Size)
+	}
+}

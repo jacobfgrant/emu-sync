@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -64,10 +65,14 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 
 	// Build a new manifest from local files
 	log.Printf("Scanning local files...")
-	newManifest, cacheHits := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose, cache)
-	result.CacheHits = cacheHits
-	if cacheHits > 0 {
-		log.Printf("Found %d files (%d cached)", len(newManifest.Files), cacheHits)
+	scan, err := buildManifest(opts.SourcePath, opts.SyncDirs, opts.SkipDotfiles, opts.Verbose, cache)
+	if err != nil {
+		return nil, fmt.Errorf("scanning source files (nothing was uploaded or deleted): %w", err)
+	}
+	newManifest := scan.manifest
+	result.CacheHits = scan.cacheHits
+	if scan.cacheHits > 0 {
+		log.Printf("Found %d files (%d cached)", len(newManifest.Files), scan.cacheHits)
 	} else {
 		log.Printf("Found %d files", len(newManifest.Files))
 	}
@@ -75,24 +80,6 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	// Save hash cache early so interrupted uploads don't lose hashes
 	if !opts.DryRun {
 		saveCache(cache, cachePath, newManifest, opts.Verbose)
-	}
-
-	if opts.ManifestOnly {
-		result.Skipped = len(newManifest.Files)
-		if !opts.DryRun {
-			saveCache(cache, cachePath, newManifest, opts.Verbose)
-			manifestData, err := newManifest.ToJSON()
-			if err != nil {
-				return nil, fmt.Errorf("serializing manifest: %w", err)
-			}
-			if err := client.UploadManifest(ctx, manifestData); err != nil {
-				return nil, fmt.Errorf("uploading manifest: %w", err)
-			}
-			if err := saveLocalManifest(newManifest, opts); err != nil {
-				return result, err
-			}
-		}
-		return result, nil
 	}
 
 	// Download existing remote manifest for diffing
@@ -110,6 +97,20 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 		if err != nil {
 			return nil, fmt.Errorf("parsing remote manifest: %w", err)
 		}
+	}
+
+	if err := checkUnscanned(scan.unscanned, oldManifest); err != nil {
+		return nil, err
+	}
+
+	if opts.ManifestOnly {
+		result.Skipped = len(newManifest.Files)
+		if !opts.DryRun {
+			if err := publishManifest(ctx, client, newManifest, opts); err != nil {
+				return nil, err
+			}
+		}
+		return result, nil
 	}
 
 	diff := manifest.Diff(newManifest, oldManifest)
@@ -149,19 +150,49 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	// Upload the new manifest and save cache
 	if !opts.DryRun {
 		saveCache(cache, cachePath, newManifest, opts.Verbose)
-		manifestData, err := newManifest.ToJSON()
-		if err != nil {
-			return nil, fmt.Errorf("serializing manifest: %w", err)
-		}
-		if err := client.UploadManifest(ctx, manifestData); err != nil {
-			return nil, fmt.Errorf("uploading manifest: %w", err)
-		}
-		if err := saveLocalManifest(newManifest, opts); err != nil {
-			return result, err
+		if err := publishManifest(ctx, client, newManifest, opts); err != nil {
+			return nil, err
 		}
 	}
 
 	return result, nil
+}
+
+// checkUnscanned refuses to continue if the bucket holds files under a path
+// that was not scanned, since publishing would delete them from the bucket
+// and then from every device.
+func checkUnscanned(unscanned []skippedPath, old *manifest.Manifest) error {
+	var blocked []string
+	for _, sp := range unscanned {
+		count := 0
+		for key := range old.Files {
+			if key == sp.key || strings.HasPrefix(key, sp.key+"/") {
+				count++
+			}
+		}
+		if count > 0 {
+			blocked = append(blocked, fmt.Sprintf("  %s (%s): %d files in bucket", sp.key, sp.reason, count))
+		}
+	}
+	if len(blocked) == 0 {
+		return nil
+	}
+	return fmt.Errorf("refusing to upload: these paths were not scanned but have files in the bucket, "+
+		"which would be deleted from the bucket and from every device:\n%s\n"+
+		"Mount or restore them, or remove them from sync_dirs to delete them intentionally. Nothing was changed.",
+		strings.Join(blocked, "\n"))
+}
+
+// publishManifest uploads the manifest to the bucket and saves the local copy.
+func publishManifest(ctx context.Context, client storage.Backend, m *manifest.Manifest, opts Options) error {
+	manifestData, err := m.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serializing manifest: %w", err)
+	}
+	if err := client.UploadManifest(ctx, manifestData); err != nil {
+		return fmt.Errorf("uploading manifest: %w", err)
+	}
+	return saveLocalManifest(m, opts)
 }
 
 func saveLocalManifest(m *manifest.Manifest, opts Options) error {
@@ -247,51 +278,101 @@ func uploadParallel(ctx context.Context, client storage.Backend, opts Options, k
 	}
 }
 
-// buildManifest walks the source directory and hashes all files.
-// When cache is non-nil, files with matching mtime+size reuse the cached hash.
-// Returns the manifest and the number of cache hits.
-func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verbose bool, cache *hashCache) (*manifest.Manifest, int) {
-	m := manifest.New()
-	cacheHits := 0
+// skippedPath is a manifest key prefix that was deliberately not scanned.
+type skippedPath struct {
+	key    string
+	reason string
+}
+
+// scanResult is the output of buildManifest.
+type scanResult struct {
+	manifest  *manifest.Manifest
+	cacheHits int
+	unscanned []skippedPath
+}
+
+// buildManifest walks each sync dir under the source path and hashes all
+// files. When cache is non-nil, files with matching mtime+size reuse the
+// cached hash. Any read error aborts the scan, because a partial manifest
+// would delete the unread files from the bucket. Missing sync dirs,
+// directory symlinks, and non-regular files are skipped and reported in
+// unscanned so the caller can refuse to delete what they used to hold.
+func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verbose bool, cache *hashCache) (*scanResult, error) {
+	scan := &scanResult{manifest: manifest.New()}
 	for _, dir := range syncDirs {
-		dirPath := filepath.Join(sourcePath, dir)
-		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		dirKey := filepath.ToSlash(filepath.Clean(dir))
+		if err := manifest.ValidateKey(dirKey); err != nil {
+			return nil, fmt.Errorf("sync dir %q: %w", dir, err)
+		}
+
+		// Resolve symlinks so a sync dir that is itself a link (e.g.
+		// roms -> /mnt/storage/roms) is walked. Keys are built from the
+		// configured dir name, not the resolved path.
+		root, err := filepath.EvalSymlinks(filepath.Join(sourcePath, filepath.FromSlash(dirKey)))
+		if errors.Is(err, fs.ErrNotExist) {
 			if verbose {
 				log.Printf("skipping %s: directory does not exist", dir)
 			}
+			scan.unscanned = append(scan.unscanned, skippedPath{dirKey, "does not exist"})
 			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("resolving %s: %w", dir, err)
+		}
 
-		err := filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
+		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				if skipDotfiles && strings.HasPrefix(d.Name(), ".") {
+
+			relPath, err := filepath.Rel(root, path)
+			if err != nil {
+				return fmt.Errorf("computing relative path for %s: %w", path, err)
+			}
+			key := dirKey
+			if relPath != "." {
+				key = dirKey + "/" + filepath.ToSlash(relPath)
+			}
+
+			if path != root && skipDotfiles && strings.HasPrefix(d.Name(), ".") {
+				if d.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if skipDotfiles && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
 				return nil
 			}
 
-			relPath, err := filepath.Rel(sourcePath, path)
+			// Stat follows symlinks, so a file symlink records its target's size.
+			info, err := os.Stat(path)
 			if err != nil {
-				return fmt.Errorf("computing relative path for %s: %w", path, err)
-			}
-			key := filepath.ToSlash(relPath)
-
-			info, err := d.Info()
-			if err != nil {
+				if d.Type()&fs.ModeSymlink != 0 {
+					log.Printf("warning: skipping broken symlink %s", key)
+					scan.unscanned = append(scan.unscanned, skippedPath{key, "broken symlink"})
+					return nil
+				}
 				return fmt.Errorf("stat %s: %w", path, err)
+			}
+			if info.IsDir() {
+				log.Printf("warning: skipping directory symlink %s", key)
+				scan.unscanned = append(scan.unscanned, skippedPath{key, "directory symlink"})
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				log.Printf("warning: skipping non-regular file %s", key)
+				scan.unscanned = append(scan.unscanned, skippedPath{key, "not a regular file"})
+				return nil
+			}
+			if err := manifest.ValidateKey(key); err != nil {
+				return err
 			}
 
 			var hash string
 			if cache != nil {
 				if cached, ok := cache.lookup(key, info.Size(), info.ModTime()); ok {
 					hash = cached
-					cacheHits++
+					scan.cacheHits++
 					if verbose {
 						log.Printf("cached: %s", key)
 					}
@@ -301,7 +382,6 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 				if verbose {
 					log.Printf("hashing: %s", key)
 				}
-				var err error
 				hash, err = manifest.HashFile(path)
 				if err != nil {
 					return fmt.Errorf("hashing %s: %w", path, err)
@@ -311,19 +391,17 @@ func buildManifest(sourcePath string, syncDirs []string, skipDotfiles bool, verb
 				}
 			}
 
-			m.Files[key] = manifest.FileEntry{
+			scan.manifest.Files[key] = manifest.FileEntry{
 				Size: info.Size(),
 				MD5:  hash,
 			}
 			return nil
 		})
 		if err != nil {
-			if verbose {
-				log.Printf("error walking %s: %v", dirPath, err)
-			}
+			return nil, err
 		}
 	}
-	return m, cacheHits
+	return scan, nil
 }
 
 // Summary returns a human-readable summary of the upload result.
