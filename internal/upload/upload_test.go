@@ -2,6 +2,7 @@ package upload
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -680,4 +681,28 @@ func verifyManifest(t *testing.T, mock *storage.MockBackend) *manifest.Manifest 
 		t.Fatalf("parsing manifest: %v", err)
 	}
 	return m
+}
+
+func TestUploadAbortsWhenManifestFetchFails(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Game.sfc": "snes rom data",
+	})
+
+	mock := storage.NewMockBackend()
+	mock.DownloadErrors[storage.ManifestKey] = errors.New("connection reset")
+
+	_, err := Run(context.Background(), mock, Options{
+		SourcePath: source,
+		SyncDirs:   []string{"roms"},
+		CachePath:  tempCachePath(t),
+	})
+	if err == nil {
+		t.Fatal("expected error when manifest fetch fails, got nil")
+	}
+
+	for _, call := range mock.Calls {
+		if strings.HasPrefix(call, "UploadFile:") || strings.HasPrefix(call, "UploadBytes:") {
+			t.Errorf("unexpected write after failed manifest fetch: %s", call)
+		}
+	}
 }

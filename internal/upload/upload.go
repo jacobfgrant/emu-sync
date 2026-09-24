@@ -2,6 +2,7 @@ package upload
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -97,11 +98,13 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	// Download existing remote manifest for diffing
 	var oldManifest *manifest.Manifest
 	remoteData, err := client.DownloadManifest(ctx)
-	if err != nil {
+	if errors.Is(err, storage.ErrNotFound) {
 		if opts.Verbose {
 			log.Printf("no existing remote manifest, assuming first upload")
 		}
 		oldManifest = manifest.New()
+	} else if err != nil {
+		return nil, fmt.Errorf("downloading remote manifest: %w", err)
 	} else {
 		oldManifest, err = manifest.ParseJSON(remoteData)
 		if err != nil {

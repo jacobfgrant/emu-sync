@@ -13,11 +13,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/ratelimit"
 )
 
 const ManifestKey = "emu-sync-manifest.json"
+
+// ErrNotFound is wrapped by download errors when the object does not exist,
+// so callers can tell a missing object from a failed request.
+var ErrNotFound = errors.New("object not found")
 
 // Backend defines the operations that upload and sync workflows need.
 // storage.Client implements this; tests can substitute a mock.
@@ -172,6 +177,9 @@ func (c *Client) DownloadBytes(ctx context.Context, key string) ([]byte, error) 
 		Key:    aws.String(c.prefixedKey(key)),
 	})
 	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("downloading %s: %w", key, ErrNotFound)
+		}
 		return nil, fmt.Errorf("downloading %s: %w", key, err)
 	}
 	defer result.Body.Close()
@@ -182,6 +190,20 @@ func (c *Client) DownloadBytes(ctx context.Context, key string) ([]byte, error) 
 	}
 
 	return data, nil
+}
+
+// isNotFound reports whether err is the S3 "no such key" response.
+// NoSuchBucket and access errors are deliberately not matched.
+func isNotFound(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "NoSuchKey", "NotFound":
+		return true
+	}
+	return false
 }
 
 // DeleteObject deletes an object from the bucket.

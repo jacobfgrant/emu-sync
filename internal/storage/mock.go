@@ -73,7 +73,7 @@ func (m *MockBackend) DownloadFile(_ context.Context, key, localPath string) err
 
 	data, ok := m.Objects[key]
 	if !ok {
-		return fmt.Errorf("object not found: %s", key)
+		return fmt.Errorf("%w: %s", ErrNotFound, key)
 	}
 
 	return os.WriteFile(localPath, data, 0o644)
@@ -90,7 +90,7 @@ func (m *MockBackend) DownloadBytes(_ context.Context, key string) ([]byte, erro
 
 	data, ok := m.Objects[key]
 	if !ok {
-		return nil, fmt.Errorf("object not found: %s", key)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, key)
 	}
 
 	return data, nil
