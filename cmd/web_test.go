@@ -1489,6 +1489,7 @@ func TestComputeSyncStatusCountsSavedDeselection(t *testing.T) {
 
 	// Selection saved earlier (e.g. via choose) but not synced yet
 	ws.cfg.Sync.SyncExclude = []string{"roms/snes/Dropped.sfc"}
+	ws.cfg.Sync.Delete = true
 
 	status := ws.computeSyncStatus()
 	if status.Removed != 1 {
@@ -1496,5 +1497,11 @@ func TestComputeSyncStatusCountsSavedDeselection(t *testing.T) {
 	}
 	if status.Unchanged != 1 {
 		t.Errorf("Unchanged = %d, want 1", status.Unchanged)
+	}
+
+	// With delete off, sync keeps the file, so it isn't reported as removed
+	ws.cfg.Sync.Delete = false
+	if status := ws.computeSyncStatus(); status.Removed != 0 {
+		t.Errorf("Removed with delete off = %d, want 0", status.Removed)
 	}
 }

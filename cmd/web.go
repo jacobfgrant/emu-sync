@@ -255,12 +255,16 @@ func (ws *webServer) computeSyncStatus() *syncStatusJSON {
 	}
 
 	plan := intsync.NewPlan(ws.remoteManifest, local, ws.cfg)
-	return &syncStatusJSON{
+	status := &syncStatusJSON{
 		New:       len(plan.Added),
 		Updated:   len(plan.Modified),
-		Removed:   len(plan.Deleted),
 		Unchanged: plan.Unchanged,
 	}
+	// With delete off, sync keeps these files, so they aren't pending changes.
+	if ws.cfg.Sync.Delete {
+		status.Removed = len(plan.Deleted)
+	}
+	return status
 }
 
 func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
