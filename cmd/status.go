@@ -6,6 +6,7 @@ import (
 	"github.com/jacobfgrant/emu-sync/internal/config"
 	"github.com/jacobfgrant/emu-sync/internal/manifest"
 	"github.com/jacobfgrant/emu-sync/internal/storage"
+	intsync "github.com/jacobfgrant/emu-sync/internal/sync"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,10 @@ var statusCmd = &cobra.Command{
 		cfg, err := config.Load(cfgPath)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
+		}
+
+		if err := cfg.ValidateEmulationPath(); err != nil {
+			return err
 		}
 
 		client := storage.NewClient(&cfg.Storage)
@@ -42,36 +47,32 @@ var statusCmd = &cobra.Command{
 			local = manifest.New()
 		}
 
-		// Filter to configured sync dirs / exclude
-		filtered := manifest.New()
-		for key, entry := range remote.Files {
-			if cfg.ShouldSync(key) {
-				filtered.Files[key] = entry
-			}
-		}
+		plan := intsync.NewPlan(remote, local, cfg)
 
-		diff := manifest.Diff(filtered, local)
-
-		if len(diff.Added) == 0 && len(diff.Modified) == 0 && len(diff.Deleted) == 0 {
+		if len(plan.Added) == 0 && len(plan.Modified) == 0 && len(plan.Deleted) == 0 {
 			fmt.Println("Up to date.")
 			return nil
 		}
 
-		if len(diff.Added) > 0 {
-			fmt.Printf("New files (%d):\n", len(diff.Added))
-			for _, f := range diff.Added {
+		if len(plan.Added) > 0 {
+			fmt.Printf("New files (%d):\n", len(plan.Added))
+			for _, f := range plan.Added {
 				fmt.Printf("  + %s\n", f)
 			}
 		}
-		if len(diff.Modified) > 0 {
-			fmt.Printf("Modified files (%d):\n", len(diff.Modified))
-			for _, f := range diff.Modified {
+		if len(plan.Modified) > 0 {
+			fmt.Printf("Modified files (%d):\n", len(plan.Modified))
+			for _, f := range plan.Modified {
 				fmt.Printf("  ~ %s\n", f)
 			}
 		}
-		if len(diff.Deleted) > 0 {
-			fmt.Printf("Deleted files (%d):\n", len(diff.Deleted))
-			for _, f := range diff.Deleted {
+		if len(plan.Deleted) > 0 {
+			if cfg.Sync.Delete {
+				fmt.Printf("Deleted files (%d):\n", len(plan.Deleted))
+			} else {
+				fmt.Printf("Removed or deselected, kept because delete is off (%d):\n", len(plan.Deleted))
+			}
+			for _, f := range plan.Deleted {
 				fmt.Printf("  - %s\n", f)
 			}
 		}

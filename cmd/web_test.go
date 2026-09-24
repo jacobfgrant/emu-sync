@@ -1463,3 +1463,38 @@ func TestEncodeSelectionsNoSubGroups(t *testing.T) {
 	}
 }
 
+
+func TestComputeSyncStatusCountsSavedDeselection(t *testing.T) {
+	ws, tmpDir := setupSyncWebServer(t)
+	emuPath := ws.cfg.Sync.EmulationPath
+
+	entry := manifest.FileEntry{Size: 1, MD5: "a"}
+	remote := manifest.New()
+	remote.Files["roms/snes/Keep.sfc"] = entry
+	remote.Files["roms/snes/Dropped.sfc"] = entry
+	ws.remoteManifest = remote
+
+	local := manifest.New()
+	local.Files["roms/snes/Keep.sfc"] = entry
+	local.Files["roms/snes/Dropped.sfc"] = entry
+	ws.localManifestPath = filepath.Join(tmpDir, "local.json")
+	if err := local.SaveJSON(ws.localManifestPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"roms/snes/Keep.sfc", "roms/snes/Dropped.sfc"} {
+		path := filepath.Join(emuPath, filepath.FromSlash(key))
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte("x"), 0o644)
+	}
+
+	// Selection saved earlier (e.g. via choose) but not synced yet
+	ws.cfg.Sync.SyncExclude = []string{"roms/snes/Dropped.sfc"}
+
+	status := ws.computeSyncStatus()
+	if status.Removed != 1 {
+		t.Errorf("Removed = %d, want 1 (next sync deletes the deselected file)", status.Removed)
+	}
+	if status.Unchanged != 1 {
+		t.Errorf("Unchanged = %d, want 1", status.Unchanged)
+	}
+}

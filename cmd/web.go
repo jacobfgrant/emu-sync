@@ -242,8 +242,8 @@ func (ws *webServer) handleSystems(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// computeSyncStatus diffs the remote manifest against the local manifest
-// and returns counts filtered to only files the config would sync.
+// computeSyncStatus reports what the next sync would change under the
+// saved config, using the same plan as sync itself.
 func (ws *webServer) computeSyncStatus() *syncStatusJSON {
 	localPath := ws.localManifestPath
 	if localPath == "" {
@@ -251,51 +251,16 @@ func (ws *webServer) computeSyncStatus() *syncStatusJSON {
 	}
 	local, err := manifest.LoadJSON(localPath)
 	if err != nil {
-		// No local manifest = first sync, everything is new
-		newCount := 0
-		for key := range ws.remoteManifest.Files {
-			if ws.cfg.ShouldSync(key) {
-				newCount++
-			}
-		}
-		return &syncStatusJSON{New: newCount}
+		local = manifest.New()
 	}
 
-	diff := manifest.Diff(ws.remoteManifest, local)
-
-	var status syncStatusJSON
-	for _, key := range diff.Added {
-		if ws.cfg.ShouldSync(key) {
-			status.New++
-		}
+	plan := intsync.NewPlan(ws.remoteManifest, local, ws.cfg)
+	return &syncStatusJSON{
+		New:       len(plan.Added),
+		Updated:   len(plan.Modified),
+		Removed:   len(plan.Deleted),
+		Unchanged: plan.Unchanged,
 	}
-	for _, key := range diff.Modified {
-		if ws.cfg.ShouldSync(key) {
-			status.Updated++
-		}
-	}
-	for _, key := range diff.Deleted {
-		if ws.cfg.ShouldSync(key) {
-			status.Removed++
-		}
-	}
-
-	// Count unchanged selected files
-	for key := range ws.remoteManifest.Files {
-		if !ws.cfg.ShouldSync(key) {
-			continue
-		}
-		localEntry, exists := local.Files[key]
-		if !exists {
-			continue
-		}
-		remoteEntry := ws.remoteManifest.Files[key]
-		if localEntry.MD5 == remoteEntry.MD5 && localEntry.Size == remoteEntry.Size {
-			status.Unchanged++
-		}
-	}
-
-	return &status
 }
 
 func (ws *webServer) handleSave(w http.ResponseWriter, r *http.Request) {
