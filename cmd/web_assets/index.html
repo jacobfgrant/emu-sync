@@ -525,6 +525,24 @@ main {
   var verifying = false;
   var syncEventSource = null;
 
+  // Session token from the URL fragment set by "emu-sync web".
+  var token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers, { "X-Emu-Sync-Token": token });
+    return fetch(path, opts).then(function(res) {
+      if (res.status === 403) {
+        throw new Error("Session not authorized. Close this tab and run emu-sync web again.");
+      }
+      return res;
+    });
+  }
+
+  function apiEvents(path) {
+    return new EventSource(path + "?token=" + encodeURIComponent(token));
+  }
+
   function formatSize(bytes) {
     if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
     if (bytes >= 1048576) return Math.round(bytes / 1048576) + " MB";
@@ -936,7 +954,7 @@ main {
     msg.textContent = "Saving...";
     msg.className = "status-msg";
 
-    fetch("/api/save", {
+    api("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections: buildSelections(), exit: exit, delete: document.getElementById("delete-toggle").checked })
@@ -983,7 +1001,7 @@ main {
   }
 
   function waitForShutdown() {
-    fetch("/api/wait").then(showDisconnected).catch(showDisconnected);
+    api("/api/wait").then(showDisconnected).catch(showDisconnected);
   }
 
   function showOpStatus(text) {
@@ -1139,7 +1157,7 @@ main {
     syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], retainedFiles: [], errorDetails: [] };
     createResultCard("Syncing...");
 
-    fetch("/api/sync", {
+    api("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selections: buildSelections(), delete: document.getElementById("delete-toggle").checked })
@@ -1159,7 +1177,7 @@ main {
         return;
       }
 
-      syncEventSource = new EventSource("/api/sync/events");
+      syncEventSource = apiEvents("/api/sync/events");
       syncEventSource.onmessage = function(e) {
         var evt;
         try { evt = JSON.parse(e.data); } catch (_) { return; }
@@ -1186,7 +1204,7 @@ main {
   }
 
   function pollSyncStatus() {
-    fetch("/api/sync/status")
+    api("/api/sync/status")
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.state === "running") {
@@ -1226,7 +1244,7 @@ main {
     msg.className = "status-msg";
     showOpStatus("Verifying...");
 
-    fetch("/api/verify", { method: "POST" })
+    api("/api/verify", { method: "POST" })
     .then(function(res) { return res.json(); })
     .then(function(data) {
       verifying = false;
@@ -1287,7 +1305,7 @@ main {
   }
 
   function checkSyncStatus() {
-    fetch("/api/sync/status")
+    api("/api/sync/status")
     .then(function(res) { return res.json(); })
     .then(function(data) {
       if (data.state === "running") {
@@ -1299,7 +1317,7 @@ main {
         syncState = { downloaded: 0, errors: 0, skipped: 0, downloadedFiles: [], deletedFiles: [], retainedFiles: [], errorDetails: [] };
         createResultCard("Syncing...");
 
-        syncEventSource = new EventSource("/api/sync/events");
+        syncEventSource = apiEvents("/api/sync/events");
         syncEventSource.onmessage = function(e) {
           var evt;
           try { evt = JSON.parse(e.data); } catch (_) { return; }
@@ -1336,7 +1354,7 @@ main {
     var msg = document.getElementById("status-msg");
     msg.textContent = "Closing...";
     msg.className = "status-msg";
-    fetch("/api/exit", { method: "POST" }).catch(function() {});
+    api("/api/exit", { method: "POST" }).catch(function() {});
     window.close();
     setTimeout(function() {
       msg.textContent = "Server stopped. You can close this tab.";
@@ -1382,7 +1400,7 @@ main {
     el.innerHTML = parts.join(", ") + " since last sync";
   }
 
-  fetch("/api/systems")
+  api("/api/systems")
     .then(function(res) { return res.json(); })
     .then(function(data) {
       systems = data.systems || [];

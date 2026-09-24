@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -24,6 +26,10 @@ import (
 
 //go:embed web_assets/index.html
 var webAssets embed.FS
+
+// tokenHeader carries the per-session token on API requests. EventSource
+// can't set headers, so the token is also accepted as a "token" query param.
+const tokenHeader = "X-Emu-Sync-Token"
 
 // eventLog captures JSON progress lines and fans them out to SSE clients.
 // Implements io.Writer so it can be passed to progress.NewReporterWriter.
@@ -73,18 +79,20 @@ type webServer struct {
 	groups            []*systemGroup
 	cfg               *config.Config
 	cfgPath           string
-	localManifestPath string               // overrides default; used by tests
-	remoteManifest    *manifest.Manifest   // for sync status diff
+	localManifestPath string             // overrides default; used by tests
+	remoteManifest    *manifest.Manifest // for sync status diff
 	server            *http.Server
-	done              chan struct{}         // closed when Save & Exit is clicked
-	shutdown          chan struct{}         // closed just before server.Shutdown in all exit paths
+	done              chan struct{} // closed when Save & Exit is clicked
+	shutdown          chan struct{} // closed just before server.Shutdown in all exit paths
 	exitOnce          sync.Once
+	token             string // required on /api/ requests
+	host              string // expected Host header, e.g. 127.0.0.1:8080
 
-	client     storage.Backend   // for sync operations
-	syncMu     sync.Mutex       // guards sync state below
-	syncLog    *eventLog        // nil when idle
-	syncDone   chan struct{}     // closed when sync goroutine finishes
-	syncResult *intsync.Result  // set when sync finishes
+	client     storage.Backend // for sync operations
+	syncMu     sync.Mutex      // guards sync state below
+	syncLog    *eventLog       // nil when idle
+	syncDone   chan struct{}   // closed when sync goroutine finishes
+	syncResult *intsync.Result // set when sync finishes
 }
 
 type systemJSON struct {
@@ -132,6 +140,54 @@ type saveResponse struct {
 	OK         bool   `json:"ok"`
 	ConfigPath string `json:"configPath,omitempty"`
 	Error      string `json:"error,omitempty"`
+}
+
+// routes returns the server's handler with the Host and token checks applied.
+func (ws *webServer) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", ws.handleIndex)
+	mux.HandleFunc("/api/systems", ws.handleSystems)
+	mux.HandleFunc("/api/save", ws.handleSave)
+	mux.HandleFunc("/api/exit", ws.handleExit)
+	mux.HandleFunc("/api/wait", ws.handleWait)
+	mux.HandleFunc("/api/sync", ws.handleSync)
+	mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
+	mux.HandleFunc("/api/sync/status", ws.handleSyncStatus)
+	mux.HandleFunc("/api/verify", ws.handleVerify)
+	return ws.guard(mux)
+}
+
+// guard rejects requests for a Host other than the one the server was
+// opened on (DNS rebinding) and API requests without the session token
+// (cross-site requests from other pages open in the browser).
+func (ws *webServer) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ws.allowedHost(r.Host) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") && !ws.validToken(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (ws *webServer) allowedHost(host string) bool {
+	_, port, err := net.SplitHostPort(ws.host)
+	if err != nil {
+		return false
+	}
+	return host == ws.host || host == net.JoinHostPort("localhost", port)
+}
+
+func (ws *webServer) validToken(r *http.Request) bool {
+	got := r.Header.Get(tokenHeader)
+	if got == "" {
+		got = r.URL.Query().Get("token")
+	}
+	return ws.token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(ws.token)) == 1
 }
 
 func (ws *webServer) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -636,18 +692,8 @@ set web.port in the config file.`,
 			done:           make(chan struct{}),
 			shutdown:       make(chan struct{}),
 			client:         client,
+			token:          rand.Text(),
 		}
-
-		mux := http.NewServeMux()
-		mux.HandleFunc("/", ws.handleIndex)
-		mux.HandleFunc("/api/systems", ws.handleSystems)
-		mux.HandleFunc("/api/save", ws.handleSave)
-		mux.HandleFunc("/api/exit", ws.handleExit)
-		mux.HandleFunc("/api/wait", ws.handleWait)
-		mux.HandleFunc("/api/sync", ws.handleSync)
-		mux.HandleFunc("/api/sync/events", ws.handleSyncEvents)
-		mux.HandleFunc("/api/sync/status", ws.handleSyncStatus)
-		mux.HandleFunc("/api/verify", ws.handleVerify)
 
 		port := webPort
 		if !cmd.Flags().Changed("port") && cfg.Web.Port > 0 {
@@ -659,8 +705,11 @@ set web.port in the config file.`,
 			return fmt.Errorf("binding to port: %w", err)
 		}
 
-		ws.server = &http.Server{Handler: mux}
-		url := fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port)
+		ws.host = listener.Addr().String()
+		ws.server = &http.Server{Handler: ws.routes()}
+		// The token goes in the fragment so it is never sent to the server
+		// or leaked in a Referer header; the page's JS reads it from there.
+		url := fmt.Sprintf("http://%s/#token=%s", ws.host, ws.token)
 
 		fmt.Printf("Opening %s\n", url)
 		fmt.Println("Press Ctrl+C to quit without saving.")
