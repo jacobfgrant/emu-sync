@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os/exec"
 	"runtime"
 	"slices"
@@ -182,6 +183,14 @@ func (ws *webServer) allowedHost(host string) bool {
 		return false
 	}
 	return host == ws.host || host == net.JoinHostPort("localhost", port)
+}
+
+// sessionToken returns the configured web.token, or a random one per run.
+func sessionToken(cfg *config.Config) string {
+	if token := strings.TrimSpace(cfg.Web.Token); token != "" {
+		return token
+	}
+	return rand.Text()
 }
 
 func (ws *webServer) validToken(r *http.Request) bool {
@@ -634,8 +643,9 @@ var webCmd = &cobra.Command{
 browse available systems, toggle individual games, save your
 selections, sync files, and verify local integrity.
 
-By default a random port is chosen. Use --port to specify one, or
-set web.port in the config file.`,
+By default a random port and access token are chosen for each run.
+Use --port or web.port to fix the port, and web.token to fix the
+token, so the page URL can be bookmarked.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := cfgFile
 		if cfgPath == "" {
@@ -690,7 +700,7 @@ set web.port in the config file.`,
 			done:           make(chan struct{}),
 			shutdown:       make(chan struct{}),
 			client:         client,
-			token:          rand.Text(),
+			token:          sessionToken(cfg),
 		}
 
 		port := webPort
@@ -707,7 +717,7 @@ set web.port in the config file.`,
 		ws.server = &http.Server{Handler: ws.routes()}
 		// The token goes in the fragment so it is never sent to the server
 		// or leaked in a Referer header; the page's JS reads it from there.
-		url := fmt.Sprintf("http://%s/#token=%s", ws.host, ws.token)
+		url := fmt.Sprintf("http://%s/#token=%s", ws.host, neturl.QueryEscape(ws.token))
 
 		fmt.Printf("Opening %s\n", url)
 		fmt.Println("Press Ctrl+C to quit without saving.")

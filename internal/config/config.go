@@ -35,7 +35,8 @@ type SyncConfig struct {
 
 // WebConfig holds settings for the web UI.
 type WebConfig struct {
-	Port int `toml:"port,omitempty"`
+	Port  int    `toml:"port,omitempty"`
+	Token string `toml:"token,omitempty"` // fixed session token so the URL can be bookmarked; default random
 }
 
 // Config is the top-level configuration.

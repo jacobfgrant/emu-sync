@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jacobfgrant/emu-sync/internal/config"
 )
 
 const testHost = "127.0.0.1:43210"
@@ -136,5 +138,23 @@ func TestGuardServesIndexWithoutToken(t *testing.T) {
 		if rec := serve(ws, req); rec.Code != http.StatusOK {
 			t.Errorf("GET / on %s: got %d, want 200", host, rec.Code)
 		}
+	}
+}
+
+func TestSessionTokenUsesConfiguredToken(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Web.Token = "  my-bookmark-token  "
+
+	if got := sessionToken(cfg); got != "my-bookmark-token" {
+		t.Errorf("sessionToken = %q, want configured token", got)
+	}
+}
+
+func TestSessionTokenRandomByDefault(t *testing.T) {
+	cfg := &config.Config{}
+
+	first, second := sessionToken(cfg), sessionToken(cfg)
+	if first == "" || first == second {
+		t.Errorf("expected distinct non-empty random tokens, got %q and %q", first, second)
 	}
 }

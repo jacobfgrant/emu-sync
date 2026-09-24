@@ -156,8 +156,11 @@ workers = 4
 # bandwidth_limit = "10MB"  # throttle transfers (e.g., "500KB", "10MB", "1GB")
 
 # [web]
-# port = 8080  # fixed port for the web UI (default: random)
+# port = 8080           # fixed port for the web UI (default: random)
+# token = "long-random-string"  # fixed access token (default: random per run)
 ```
+
+The web UI only accepts API requests that carry its access token, which `emu-sync web` puts in the URL it opens (`http://127.0.0.1:8080/#token=...`). Both the port and the token change on every run unless you set `web.port` and `web.token`; set both to get a URL you can bookmark while `emu-sync web` is running. Treat the token like a password, since anyone on the machine who has it can change your selections and start syncs.
 
 Relative paths in `emulation_path` resolve against the user's home directory (e.g., `Emulation` becomes `~/Emulation`). Environment variables like `$HOME` are also expanded. Absolute paths and `~/` paths work as expected.
 
