@@ -105,43 +105,13 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 		local = manifest.New()
 	}
 
-	// Filter remote manifest to configured sync_dirs / sync_exclude
-	filteredRemote := manifest.New()
-	filteredRemote.GeneratedAt = remote.GeneratedAt
-	for key, entry := range remote.Files {
-		if cfg.ShouldSync(key) {
-			filteredRemote.Files[key] = entry
+	plan := NewPlan(remote, local, cfg)
+	filteredRemote := plan.Selected
+	for _, key := range plan.Missing {
+		if opts.Verbose {
+			log.Printf("file missing from disk, will re-download: %s", key)
 		}
-	}
-
-	diff := manifest.Diff(filteredRemote, local)
-
-	// Check for files that the local manifest says exist but are
-	// missing from disk (e.g., accidentally deleted by the user).
-	// Build a set of keys already queued for download (Added + Modified)
-	// to avoid duplicates.
-	queued := make(map[string]bool, len(diff.Added)+len(diff.Modified))
-	for _, key := range diff.Added {
-		queued[key] = true
-	}
-	for _, key := range diff.Modified {
-		queued[key] = true
-	}
-	for key := range filteredRemote.Files {
-		if queued[key] {
-			continue // already scheduled for download
-		}
-		if _, inLocal := local.Files[key]; !inLocal {
-			continue // not in local manifest, already in diff.Added
-		}
-		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
-		if _, err := os.Stat(localPath); os.IsNotExist(err) {
-			if opts.Verbose {
-				log.Printf("file missing from disk, will re-download: %s", key)
-			}
-			diff.Added = append(diff.Added, key)
-			delete(local.Files, key)
-		}
+		delete(local.Files, key)
 	}
 
 	// Clean up any leftover temp files from interrupted syncs
@@ -156,7 +126,7 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 	}
 
 	// Download new and modified files
-	toDownload := append(diff.Added, diff.Modified...)
+	toDownload := append(plan.Added, plan.Modified...)
 
 	if opts.DryRun {
 		for _, key := range toDownload {
@@ -171,7 +141,7 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 
 	// Delete local files removed from remote
 	deleteAllowed := cfg.Sync.Delete && !opts.NoDelete
-	for _, key := range diff.Deleted {
+	for _, key := range plan.Deleted {
 		localPath := filepath.Join(cfg.Sync.EmulationPath, filepath.FromSlash(key))
 
 		if opts.DryRun {
@@ -211,7 +181,7 @@ func Run(ctx context.Context, client storage.Backend, cfg *config.Config, opts O
 		}
 	}
 
-	result.Skipped = len(filteredRemote.Files) - len(toDownload)
+	result.Skipped = plan.Unchanged
 
 	if opts.Progress != nil {
 		opts.Progress.Done(len(result.Downloaded), len(result.Deleted), len(result.Retained), len(result.Errors), result.Skipped)
