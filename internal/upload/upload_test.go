@@ -915,3 +915,106 @@ func TestUploadFileSymlinkUsesTargetSize(t *testing.T) {
 		t.Errorf("size = %d, want 10 (target size, not link size)", entry.Size)
 	}
 }
+
+func TestUploadRetriesFailedNewFile(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Good.sfc": "good",
+		"roms/snes/New.sfc":  "new",
+	})
+	mock := storage.NewMockBackend()
+	mock.UploadErrors["roms/snes/New.sfc"] = errors.New("simulated")
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if _, ok := verifyManifest(t, mock).Files["roms/snes/New.sfc"]; ok {
+		t.Error("failed new file should not be published in the manifest")
+	}
+
+	delete(mock.UploadErrors, "roms/snes/New.sfc")
+	result, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(result.Uploaded) != 1 || result.Uploaded[0] != "roms/snes/New.sfc" {
+		t.Errorf("second run uploaded %v, want [roms/snes/New.sfc]", result.Uploaded)
+	}
+}
+
+func TestUploadRetriesFailedModifiedFile(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			source := setupSourceDir(t, map[string]string{
+				"roms/snes/Game.sfc":  "v1",
+				"roms/snes/Other.sfc": "other",
+			})
+			mock := storage.NewMockBackend()
+			opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, Workers: workers, CachePath: tempCachePath(t)}
+
+			if _, err := Run(context.Background(), mock, opts); err != nil {
+				t.Fatalf("first Run: %v", err)
+			}
+			v1 := verifyManifest(t, mock).Files["roms/snes/Game.sfc"]
+
+			gamePath := filepath.Join(source, "roms/snes/Game.sfc")
+			if err := os.WriteFile(gamePath, []byte("v2 is longer"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			otherPath := filepath.Join(source, "roms/snes/Other.sfc")
+			if err := os.WriteFile(otherPath, []byte("other v2"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mock.UploadErrors["roms/snes/Game.sfc"] = errors.New("simulated")
+			if _, err := Run(context.Background(), mock, opts); err != nil {
+				t.Fatalf("second Run: %v", err)
+			}
+			if got := verifyManifest(t, mock).Files["roms/snes/Game.sfc"]; got != v1 {
+				t.Errorf("manifest entry = %+v, want old entry %+v", got, v1)
+			}
+
+			delete(mock.UploadErrors, "roms/snes/Game.sfc")
+			result, err := Run(context.Background(), mock, opts)
+			if err != nil {
+				t.Fatalf("third Run: %v", err)
+			}
+			if len(result.Uploaded) != 1 {
+				t.Errorf("third run uploaded %v, want the previously failed file", result.Uploaded)
+			}
+		})
+	}
+}
+
+func TestUploadRetriesFailedDelete(t *testing.T) {
+	source := setupSourceDir(t, map[string]string{
+		"roms/snes/Keep.sfc": "keep",
+		"roms/snes/Gone.sfc": "gone",
+	})
+	mock := storage.NewMockBackend()
+	opts := Options{SourcePath: source, SyncDirs: []string{"roms"}, CachePath: tempCachePath(t)}
+
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	os.Remove(filepath.Join(source, "roms/snes/Gone.sfc"))
+	mock.DeleteErrors["roms/snes/Gone.sfc"] = errors.New("simulated")
+	if _, err := Run(context.Background(), mock, opts); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if _, ok := verifyManifest(t, mock).Files["roms/snes/Gone.sfc"]; !ok {
+		t.Error("file whose delete failed should stay in the manifest")
+	}
+
+	delete(mock.DeleteErrors, "roms/snes/Gone.sfc")
+	result, err := Run(context.Background(), mock, opts)
+	if err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if len(result.Deleted) != 1 {
+		t.Errorf("third run deleted %v, want the previously failed delete", result.Deleted)
+	}
+	if _, ok := mock.Objects["roms/snes/Gone.sfc"]; ok {
+		t.Error("Gone.sfc should be deleted from bucket")
+	}
+}

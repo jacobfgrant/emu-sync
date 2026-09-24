@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,15 +119,16 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	// Upload new and modified files
 	toUpload := append(diff.Added, diff.Modified...)
 
+	var failed []string
 	if opts.DryRun {
 		for _, key := range toUpload {
 			fmt.Printf("would upload: %s\n", key)
 			result.Uploaded = append(result.Uploaded, key)
 		}
 	} else if opts.Workers > 1 && len(toUpload) > 1 {
-		uploadParallel(ctx, client, opts, toUpload, result)
+		failed = uploadParallel(ctx, client, opts, toUpload, result)
 	} else {
-		uploadSequential(ctx, client, opts, toUpload, result)
+		failed = uploadSequential(ctx, client, opts, toUpload, result)
 	}
 
 	// Delete remote files that no longer exist locally
@@ -139,6 +141,7 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 			}
 			if err := client.DeleteObject(ctx, key); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("delete %s: %w", key, err))
+				failed = append(failed, key)
 				continue
 			}
 		}
@@ -150,7 +153,8 @@ func Run(ctx context.Context, client storage.Backend, opts Options) (*Result, er
 	// Upload the new manifest and save cache
 	if !opts.DryRun {
 		saveCache(cache, cachePath, newManifest, opts.Verbose)
-		if err := publishManifest(ctx, client, newManifest, opts); err != nil {
+		published := revertFailed(newManifest, oldManifest, failed)
+		if err := publishManifest(ctx, client, published, opts); err != nil {
 			return nil, err
 		}
 	}
@@ -181,6 +185,25 @@ func checkUnscanned(unscanned []skippedPath, old *manifest.Manifest) error {
 		"which would be deleted from the bucket and from every device:\n%s\n"+
 		"Mount or restore them, or remove them from sync_dirs to delete them intentionally. Nothing was changed.",
 		strings.Join(blocked, "\n"))
+}
+
+// revertFailed returns a copy of scanned in which each failed key is reset
+// to its old entry (or dropped if it was new), so the published manifest
+// matches what the bucket actually holds and the next run retries it.
+func revertFailed(scanned, old *manifest.Manifest, failed []string) *manifest.Manifest {
+	m := &manifest.Manifest{
+		Version:     scanned.Version,
+		GeneratedAt: scanned.GeneratedAt,
+		Files:       maps.Clone(scanned.Files),
+	}
+	for _, key := range failed {
+		if entry, ok := old.Files[key]; ok {
+			m.Files[key] = entry
+		} else {
+			delete(m.Files, key)
+		}
+	}
+	return m
 }
 
 // publishManifest uploads the manifest to the bucket and saves the local copy.
@@ -220,7 +243,9 @@ func saveCache(cache *hashCache, path string, m *manifest.Manifest, verbose bool
 	}
 }
 
-func uploadSequential(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) {
+// uploadSequential uploads keys one at a time and returns the keys that failed.
+func uploadSequential(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) []string {
+	var failed []string
 	for _, key := range keys {
 		localPath := filepath.Join(opts.SourcePath, filepath.FromSlash(key))
 		if opts.Verbose {
@@ -231,13 +256,16 @@ func uploadSequential(ctx context.Context, client storage.Backend, opts Options,
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("upload %s: %w", key, err))
+			failed = append(failed, key)
 			continue
 		}
 		result.Uploaded = append(result.Uploaded, key)
 	}
+	return failed
 }
 
-func uploadParallel(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) {
+// uploadParallel uploads keys with a worker pool and returns the keys that failed.
+func uploadParallel(ctx context.Context, client storage.Backend, opts Options, keys []string, result *Result) []string {
 	jobs := make(chan string, len(keys))
 	results := make(chan uploadResult, len(keys))
 
@@ -269,13 +297,16 @@ func uploadParallel(ctx context.Context, client storage.Backend, opts Options, k
 		close(results)
 	}()
 
+	var failed []string
 	for ur := range results {
 		if ur.err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("upload %s: %w", ur.key, ur.err))
+			failed = append(failed, ur.key)
 			continue
 		}
 		result.Uploaded = append(result.Uploaded, ur.key)
 	}
+	return failed
 }
 
 // skippedPath is a manifest key prefix that was deliberately not scanned.
