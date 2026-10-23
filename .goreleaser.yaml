@@ -37,8 +37,10 @@ homebrew_casks:
       name: homebrew-tap
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/emu-sync"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/emu-sync"]
+          end
 
 nfpms:
   - package_name: emu-sync
